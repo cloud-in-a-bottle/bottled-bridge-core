@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/networkid"
 )
 
 var (
@@ -14,8 +15,8 @@ var (
 	ErrNoSearch    = errors.New("this network can't search for people")
 )
 
-// StartChat opens (creating if needed) the one-to-one chat with a user, given their remote ID or anything else the
-// connector resolves (eg a phone number), and returns its conversation ID.
+// StartChat opens (creating if needed) the one-to-one chat with whoever identifier means to the connector (eg a phone
+// number, or a user ID), and returns its conversation ID.
 func (s *Service) StartChat(ctx context.Context, identifier string) (int64, error) {
 	login := s.CurrentLogin(ctx)
 	if login == nil {
@@ -31,13 +32,44 @@ func (s *Service) StartChat(ctx context.Context, identifier string) (int64, erro
 	} else if resp == nil || resp.Chat == nil {
 		return 0, fmt.Errorf("couldn't find a chat with %s", identifier)
 	}
-	portal := resp.Chat.Portal
+	return s.openChat(ctx, login, resp.Chat)
+}
+
+// StartChatWithPerson opens (creating if needed) the one-to-one chat with a user known by their remote ID, eg from
+// another chat or a search. Connectors that can start a chat with a known user directly do (as bridgev2's own
+// provisioning API does); for the others it's StartChat with the ID.
+func (s *Service) StartChatWithPerson(ctx context.Context, remoteID string) (int64, error) {
+	login := s.CurrentLogin(ctx)
+	if login == nil {
+		return 0, ErrNotLoggedIn
+	}
+	api, ok := login.Client.(bridgev2.GhostDMCreatingNetworkAPI)
+	validator, validates := s.opts.Connector.(bridgev2.IdentifierValidatingNetwork)
+	if !ok || !validates || !validator.ValidateUserID(networkid.UserID(remoteID)) {
+		return s.StartChat(ctx, remoteID)
+	}
+	ghost, err := s.br.GetGhostByID(ctx, networkid.UserID(remoteID))
+	if err != nil {
+		return 0, err
+	}
+	resp, err := api.CreateChatWithGhost(ctx, ghost)
+	if err != nil {
+		return 0, err
+	} else if resp == nil {
+		return 0, fmt.Errorf("couldn't find a chat with %s", remoteID)
+	}
+	return s.openChat(ctx, login, resp)
+}
+
+func (s *Service) openChat(ctx context.Context, login *bridgev2.UserLogin, chat *bridgev2.CreateChatResponse) (int64, error) {
+	portal := chat.Portal
 	if portal == nil {
-		if portal, err = s.br.GetPortalByKey(ctx, resp.Chat.PortalKey); err != nil {
+		var err error
+		if portal, err = s.br.GetPortalByKey(ctx, chat.PortalKey); err != nil {
 			return 0, err
 		}
 	}
-	if err = portal.CreateMatrixRoom(ctx, login, resp.Chat.PortalInfo); err != nil {
+	if err := portal.CreateMatrixRoom(ctx, login, chat.PortalInfo); err != nil {
 		return 0, err
 	}
 	return s.store.ConversationByRoom(ctx, string(portal.MXID))

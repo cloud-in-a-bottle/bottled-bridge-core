@@ -24,6 +24,8 @@ type FakeNetwork struct {
 	// portal ID. Backwards pages are served newest first, one page per FetchMessages call.
 	history map[networkid.PortalID][]*bridgev2.BackfillMessage
 	older   map[networkid.PortalID][][]*bridgev2.BackfillMessage
+	// How chats were started (see ChatsStarted).
+	chatsStarted []string
 }
 
 func NewFakeNetwork() *FakeNetwork {
@@ -120,7 +122,46 @@ type fakeClient struct {
 var (
 	_ bridgev2.BackfillingNetworkAPI       = (*fakeClient)(nil)
 	_ bridgev2.RedactionHandlingNetworkAPI = (*fakeClient)(nil)
+	_ bridgev2.GhostDMCreatingNetworkAPI   = (*fakeClient)(nil)
+	_ bridgev2.IdentifierValidatingNetwork = (*FakeNetwork)(nil)
 )
+
+// ValidateUserID accepts the fake network's users, so the bridge can start chats with them directly.
+func (n *FakeNetwork) ValidateUserID(id networkid.UserID) bool {
+	return id == "alice" || id == "bob"
+}
+
+// ChatsStarted lists how chats were started: "resolve:<identifier>" or "ghost:<user ID>".
+func (n *FakeNetwork) ChatsStarted() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]string(nil), n.chatsStarted...)
+}
+
+func dmResponse(userID networkid.UserID) *bridgev2.CreateChatResponse {
+	return &bridgev2.CreateChatResponse{PortalKey: networkid.PortalKey{ID: networkid.PortalID(userID), Receiver: "me"}}
+}
+
+// ResolveIdentifier takes "+1" as a phone number for alice, and user IDs as themselves.
+func (c *fakeClient) ResolveIdentifier(_ context.Context, identifier string, _ bool) (*bridgev2.ResolveIdentifierResponse, error) {
+	c.n.mu.Lock()
+	defer c.n.mu.Unlock()
+	c.n.chatsStarted = append(c.n.chatsStarted, "resolve:"+identifier)
+	userID := networkid.UserID(identifier)
+	if identifier == "+1" {
+		userID = "alice"
+	} else if !c.n.ValidateUserID(userID) {
+		return nil, fmt.Errorf("nobody is %q", identifier)
+	}
+	return &bridgev2.ResolveIdentifierResponse{UserID: userID, Chat: dmResponse(userID)}, nil
+}
+
+func (c *fakeClient) CreateChatWithGhost(_ context.Context, ghost *bridgev2.Ghost) (*bridgev2.CreateChatResponse, error) {
+	c.n.mu.Lock()
+	defer c.n.mu.Unlock()
+	c.n.chatsStarted = append(c.n.chatsStarted, "ghost:"+string(ghost.ID))
+	return dmResponse(ghost.ID), nil
+}
 
 func (c *fakeClient) Connect(context.Context)      {}
 func (c *fakeClient) Disconnect()                  {}

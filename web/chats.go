@@ -71,7 +71,13 @@ func (s *Server) newConversation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	conversationID, err := s.svc.StartChat(r.Context(), target)
+	var conversationID int64
+	var err error
+	if req.Identifier != "" {
+		conversationID, err = s.svc.StartChat(r.Context(), target)
+	} else {
+		conversationID, err = s.svc.StartChatWithPerson(r.Context(), target)
+	}
 	if errors.Is(err, bridge.ErrNotLoggedIn) {
 		err = BadRequest(err.Error())
 	}
