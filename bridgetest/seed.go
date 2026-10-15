@@ -8,12 +8,13 @@ import (
 	"maunium.net/go/mautrix/bridgev2/simplevent"
 )
 
-// SeedDevData fills dir, laid out like an app's data, with sample chats for looking at the UI. png is a picture to
-// send (eg the app's icon). Call it from an app's test, skipped unless asked for:
+// SeedDevData fills dir, laid out like an app's data, with sample chats for looking at the UI. dbOwner is the app's
+// (bridge.Options.DBOwner), and png is a picture to send (eg the app's icon). Call it from an app's test, skipped
+// unless asked for:
 //
 //	DEV_SEED_DIR=$PWD/dev-data go test -tags sqlite_fts5 -run TestSeedDevData ./...
-func SeedDevData(t *testing.T, dir string, png []byte) {
-	h := NewIn(t, dir, nil)
+func SeedDevData(t *testing.T, dir, dbOwner string, png []byte) {
+	h := NewIn(t, dir, Options{DBOwner: dbOwner})
 	base := time.Now().Add(-26 * time.Hour)
 	at := func(minutes int) time.Time { return base.Add(time.Duration(minutes) * time.Minute) }
 	h.Queue(TextMessage(DMKey(), "alice", "a1", "Hey! Are we still on for Saturday?", at(0)))

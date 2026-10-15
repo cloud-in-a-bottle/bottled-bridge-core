@@ -37,12 +37,19 @@ type Harness struct {
 }
 
 func New(t *testing.T) *Harness {
-	return NewIn(t, t.TempDir(), nil)
+	return NewIn(t, t.TempDir(), Options{})
 }
 
-// NewIn lays out dir like an app's data: sqlite/{main,bridge}.db and data/attachments. configure adjusts the bridge
-// config, as bridge.Options.Configure does.
-func NewIn(t *testing.T, dir string, configure func(*bridgeconfig.BridgeConfig)) *Harness {
+type Options struct {
+	// The bridge database's owner, as in bridge.Options; it must match the app's for the app to open the database.
+	// Defaults to "bridgetest".
+	DBOwner string
+	// Adjusts the bridge config, as bridge.Options.Configure does.
+	Configure func(*bridgeconfig.BridgeConfig)
+}
+
+// NewIn lays out dir like an app's data: sqlite/{main,bridge}.db and data/attachments.
+func NewIn(t *testing.T, dir string, hopts Options) *Harness {
 	log := zerolog.New(zerolog.NewTestWriter(t)).Level(zerolog.InfoLevel)
 	if err := os.MkdirAll(filepath.Join(dir, "sqlite"), 0o700); err != nil {
 		t.Fatal(err)
@@ -58,7 +65,10 @@ func NewIn(t *testing.T, dir string, configure func(*bridgeconfig.BridgeConfig))
 	}
 	broker := events.NewBroker()
 	net := NewFakeNetwork()
-	opts := bridge.Options{Connector: net, DBOwner: "bridgetest", MaxFileSize: 1 << 20, Configure: configure}
+	if hopts.DBOwner == "" {
+		hopts.DBOwner = "bridgetest"
+	}
+	opts := bridge.Options{Connector: net, DBOwner: hopts.DBOwner, MaxFileSize: 1 << 20, Configure: hopts.Configure}
 	svc, err := bridge.New(opts, filepath.Join(dir, "sqlite", "bridge.db"), st, fs, broker, log)
 	if err != nil {
 		t.Fatal(err)
