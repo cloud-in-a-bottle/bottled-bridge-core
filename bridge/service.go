@@ -37,6 +37,9 @@ type Options struct {
 	SearchPeople func(ctx context.Context, login *bridgev2.UserLogin, query string) ([]FoundPerson, error)
 	// Drops and re-establishes the connection. Nil disconnects and connects the login's client.
 	Reconnect func(login *bridgev2.UserLogin)
+	// Reports whether the history the network sends right after logging in is still arriving, before its chats are
+	// created (eg WhatsApp's transfer from the phone). The UI says so meanwhile. Nil means never.
+	InitialSync func(login *bridgev2.UserLogin) bool
 }
 
 type Service struct {
@@ -187,6 +190,8 @@ type Account struct {
 	State        string `json:"state"`
 	StateError   string `json:"state_error,omitempty"`
 	StateMessage string `json:"state_message,omitempty"`
+	// The history sent after logging in is still arriving (Options.InitialSync).
+	Syncing bool `json:"syncing,omitempty"`
 }
 
 func (s *Service) Account(ctx context.Context) Account {
@@ -202,6 +207,7 @@ func (s *Service) Account(ctx context.Context) Account {
 		State:        string(st.StateEvent),
 		StateError:   string(st.Error),
 		StateMessage: st.Message,
+		Syncing:      s.opts.InitialSync != nil && s.opts.InitialSync(login),
 	}
 }
 

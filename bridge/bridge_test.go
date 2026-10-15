@@ -2,6 +2,7 @@ package bridge_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -223,5 +224,20 @@ func TestImageMessage(t *testing.T) {
 	}
 	if f.SHA256 == "" || localmx.SHAFromContentURI(localmx.ContentURI(f.SHA256)) != f.SHA256 {
 		t.Fatalf("unexpected file: %+v", f)
+	}
+}
+
+func TestAccountReportsInitialSync(t *testing.T) {
+	var syncing atomic.Bool
+	syncing.Store(true)
+	h := bridgetest.NewIn(t, t.TempDir(), bridgetest.Options{
+		InitialSync: func(*bridgev2.UserLogin) bool { return syncing.Load() },
+	})
+	if a := h.Svc.Account(h.Ctx); !a.LoggedIn || !a.Syncing {
+		t.Fatalf("expected a syncing account: %+v", a)
+	}
+	syncing.Store(false)
+	if a := h.Svc.Account(h.Ctx); a.Syncing {
+		t.Fatalf("expected sync to be over: %+v", a)
 	}
 }

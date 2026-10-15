@@ -30,6 +30,9 @@ type Branding struct {
 	IdentifierPlaceholder string `json:"identifier_placeholder,omitempty"`
 	// Show a button to fetch a chat's older messages from the network, a page at a time (bridge.Service.LoadOlder).
 	OnDemandHistory bool `json:"on_demand_history"`
+	// Shown above the chat list while the history sent after logging in is still arriving (bridge.Options.InitialSync).
+	// Empty uses a generic text.
+	SyncingText string `json:"syncing_text,omitempty"`
 	// JS modules in the app's static files that add sections to settings.
 	Extensions []Extension `json:"extensions"`
 }

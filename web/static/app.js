@@ -314,13 +314,29 @@ function renderConnection() {
   const box = app.querySelector("#connection");
   if (!box || !state.account) return;
   const a = state.account;
-  const text = a.state in STATE_TEXT ? STATE_TEXT[a.state] : (a.state ? `${NETWORK}: ${a.state}` : "Starting…");
+  let text = a.state in STATE_TEXT ? STATE_TEXT[a.state] : (a.state ? `${NETWORK}: ${a.state}` : "Starting…");
+  if (!text && a.syncing) text = CONFIG.syncing_text || `Getting your chats from ${NETWORK}… They appear here once they've arrived.`;
+  watchSync();
   box.hidden = !text;
   box.className = `connection${["BAD_CREDENTIALS", "UNKNOWN_ERROR", "LOGGED_OUT"].includes(a.state) ? " bad" : ""}`;
   box.textContent = text ? `${text}${a.state_message ? ` (${a.state_message})` : ""}` : "";
   if (a.state === "BAD_CREDENTIALS") {
     box.append(" ", el("button", { type: "button", class: "link", onclick: relogin }, "Log in again"));
   }
+}
+
+// While the history sent after logging in is arriving, check every few seconds for when it's done: no event says so.
+let syncTimer = null;
+function watchSync() {
+  if (!state.account || !state.account.syncing || syncTimer) return;
+  syncTimer = setTimeout(async () => {
+    syncTimer = null;
+    const s = await api("GET", "/api/state").catch(() => null);
+    if (!s || !s.account.logged_in) return;
+    state.account = s.account;
+    renderConnection();
+    if (!s.account.syncing) refreshConversations().catch(() => {});
+  }, 3000);
 }
 
 async function relogin() {

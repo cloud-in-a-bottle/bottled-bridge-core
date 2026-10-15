@@ -46,6 +46,8 @@ type Options struct {
 	DBOwner string
 	// Adjusts the bridge config, as bridge.Options.Configure does.
 	Configure func(*bridgeconfig.BridgeConfig)
+	// As bridge.Options.InitialSync.
+	InitialSync func(*bridgev2.UserLogin) bool
 }
 
 // NewIn lays out dir like an app's data: sqlite/{main,bridge}.db and data/attachments.
@@ -68,7 +70,8 @@ func NewIn(t *testing.T, dir string, hopts Options) *Harness {
 	if hopts.DBOwner == "" {
 		hopts.DBOwner = "bridgetest"
 	}
-	opts := bridge.Options{Connector: net, DBOwner: hopts.DBOwner, MaxFileSize: 1 << 20, Configure: hopts.Configure}
+	opts := bridge.Options{Connector: net, DBOwner: hopts.DBOwner, MaxFileSize: 1 << 20, Configure: hopts.Configure,
+		InitialSync: hopts.InitialSync}
 	svc, err := bridge.New(opts, filepath.Join(dir, "sqlite", "bridge.db"), st, fs, broker, log)
 	if err != nil {
 		t.Fatal(err)
