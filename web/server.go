@@ -25,6 +25,16 @@ import (
 //go:embed static
 var staticFS embed.FS
 
+// StaticFS is the UI's static files, as served under /static/. ui.js (the UI's building blocks) and app.css are for
+// other UIs with the same look too, eg the inbox app's.
+func StaticFS() fs.FS {
+	sub, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		panic(err)
+	}
+	return sub
+}
+
 // appStaticFiles must be in Options.Static.
 var appStaticFiles = []string{"favicon.svg", "apple-touch-icon.png"}
 

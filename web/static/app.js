@@ -1,4 +1,9 @@
 import { openStorage } from "/static/storage.js";
+import {
+  attachmentNode, avatar, closePopover, el, formatDay, formatDuration, formatTime, linkify, menu,
+  missingAttachmentNode, openPopover, reactionPicker as emojiPicker, reactionsNode, tapToShowTools, template, toast,
+  toolButton,
+} from "/static/ui.js";
 
 // The app's branding and options (web.Branding).
 const CONFIG = JSON.parse(document.getElementById("app-config").textContent);
@@ -51,73 +56,9 @@ export async function api(method, path, body) {
   return text ? JSON.parse(text) : null;
 }
 
-function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === null || v === false) continue;
-    if (k === "class") node.className = v;
-    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v === true ? "" : v);
-  }
-  for (const c of children.flat()) {
-    if (c === null || c === undefined || c === false) continue;
-    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
-  }
-  return node;
-}
-
-function template(id) {
-  return document.getElementById(id).content.cloneNode(true);
-}
-
-function avatarColor(seed) {
-  // Golden-angle spacing so consecutive ids get clearly different hues.
-  let h = 0;
-  for (const ch of String(seed)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return `hsl(${Math.round((h * 137.508) % 360)} 45% 48%)`;
-}
-
-function avatar(name, seed, sha) {
-  const initials = (name || "?").replace(/[^\p{L}\p{N} ]/gu, "").split(/\s+/).filter(Boolean)
-    .slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "#";
-  const node = el("span", { class: "avatar", style: `background:${avatarColor(seed)}` }, initials);
-  if (sha) {
-    const img = el("img", { src: `/api/files/${sha}`, alt: "", loading: "lazy" });
-    img.addEventListener("error", () => img.remove());
-    node.replaceChildren(img);
-  }
-  return node;
-}
-
-function formatTime(ms) {
-  const d = new Date(ms);
-  const now = new Date();
-  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  if (now - d < 6 * 864e5) return d.toLocaleDateString([], { weekday: "short" });
-  return d.toLocaleDateString([], { month: "short", day: "numeric", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
-}
-
-function formatDay(ms) {
-  return new Date(ms).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-}
-
-function formatDuration(ms) {
-  const seconds = Math.round(ms / 1000);
-  if (!seconds) return "off";
-  const units = [["w", 604800], ["d", 86400], ["h", 3600], ["m", 60], ["s", 1]];
-  for (const [u, s] of units) if (seconds % s === 0) return `${seconds / s}${u}`;
-  return `${seconds}s`;
-}
-
-function formatSize(n) {
-  const units = ["B", "KB", "MB", "GB"];
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-  return `${n.toFixed(i ? 1 : 0)} ${units[i]}`;
-}
-
-function toast(message) {
-  alert(message);
+// Avatars and other files referred to by hash.
+function fileURL(sha) {
+  return sha ? `/api/files/${sha}` : null;
 }
 
 // ---------------------------------------------------------------- boot / login
@@ -372,7 +313,7 @@ function renderConversationList() {
   if (!list) return;
   list.replaceChildren(...state.conversations.filter((c) => !c.archived || c.id === state.activeId).map((c) => el("li",
     { class: `${c.id === state.activeId ? "active" : ""}${isMuted(c) ? " muted" : ""}`, onclick: () => { location.hash = `#/c/${c.id}`; } },
-    avatar(c.name, avatarSeed(c), c.avatar_sha256),
+    avatar(c.name, avatarSeed(c), fileURL(c.avatar_sha256)),
     el("span", { class: "name" }, c.pinned ? "📌 " : "", c.name),
     el("span", { class: "time" }, c.last_message_at ? formatTime(c.last_message_at) : ""),
     el("span", { class: "preview" }, state.typing.has(c.id) ? "typing…" : (c.last_message_preview || "")),
@@ -483,7 +424,7 @@ function renderThreadHeader() {
   const d = state.detail;
   const thread = app.querySelector("#thread");
   thread.querySelector('[data-field="avatar"]').replaceChildren(
-    avatar(d.summary.name, avatarSeed(d.summary), d.summary.avatar_sha256));
+    avatar(d.summary.name, avatarSeed(d.summary), fileURL(d.summary.avatar_sha256)));
   thread.querySelector('[data-field="name"]').textContent = d.summary.name;
   const parts = [];
   if (d.summary.kind === "group") parts.push(`${d.members.length} members`);
@@ -731,14 +672,7 @@ function renderMessage(m, showAuthor) {
   if (!m.deleted && !(state.detail && state.detail.summary.read_only)) row.append(renderTools(m, node));
   node.append(row);
   if (m.reactions.length) {
-    const groups = new Map();
-    for (const r of m.reactions) {
-      if (!groups.has(r.emoji)) groups.set(r.emoji, []);
-      groups.get(r.emoji).push(r);
-    }
-    node.append(el("div", { class: "reactions" }, [...groups].map(([emoji, rs]) => el("span", {
-      class: rs.some((r) => r.mine) ? "mine" : "", title: rs.map((r) => (r.mine ? "You" : r.reactor_name)).join(", "),
-    }, emoji, rs.length > 1 ? ` ${rs.length}` : ""))));
+    node.append(reactionsNode(m.reactions.map((r) => ({ emoji: r.emoji, name: r.reactor_name, mine: r.mine }))));
   }
   const meta = [formatTime(m.sent_at)];
   if (m.edited_at) meta.push("edited");
@@ -754,13 +688,7 @@ function renderMessage(m, showAuthor) {
     metaNode.append(`· ${STATUS_TEXT[m.status] || m.status}`);
   }
   node.append(metaNode);
-  // On touch screens there's no hover: tapping a message shows its tools.
-  node.addEventListener("click", (e) => {
-    if (window.matchMedia("(hover: none)").matches && !e.target.closest("a,button,audio,video,img,.quote")) {
-      for (const other of document.querySelectorAll(".msg.show-tools")) if (other !== node) other.classList.remove("show-tools");
-      node.classList.toggle("show-tools");
-    }
-  });
+  tapToShowTools(node);
   return node;
 }
 
@@ -779,18 +707,6 @@ function renderLinkPreview(p) {
     p["og:description"] ? el("small", {}, p["og:description"]) : null);
 }
 
-const ICONS = {
-  more: '<svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>',
-  reply: '<svg viewBox="0 0 24 24" width="20" height="20"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>',
-  react: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1.9 2 5.1 2 7 0" stroke-linecap="round"/><circle cx="9" cy="10" r="1.1" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.1" fill="currentColor" stroke="none"/></svg>',
-};
-
-function toolButton(name, title, onclick) {
-  const button = el("button", { type: "button", class: "tool", title, "aria-label": title, onclick });
-  button.innerHTML = ICONS[name];
-  return button;
-}
-
 // The icons beside a bubble, as messenger.com has them: react, reply, and a menu of the rest. In the DOM they follow the
 // bubble; for outgoing messages the row is reversed, so they sit to its left.
 function renderTools(m, node) {
@@ -806,16 +722,9 @@ function renderTools(m, node) {
 
 function reactionPicker(m) {
   const mine = m.reactions.find((r) => r.mine);
-  return el("div", { class: "reaction-picker" }, REACTIONS.map((emoji) => el("button", {
-    type: "button",
-    class: mine && mine.emoji === emoji ? "mine" : null,
-    title: mine && mine.emoji === emoji ? "Remove reaction" : `React ${emoji}`,
-    onclick: () => {
-      closePopover();
-      api("POST", `/api/messages/${m.id}/reaction`, { emoji: mine && mine.emoji === emoji ? null : emoji })
-        .catch((e) => toast(e.message));
-    },
-  }, emoji)));
+  return emojiPicker(REACTIONS, mine ? mine.emoji : null, (emoji) => {
+    api("POST", `/api/messages/${m.id}/reaction`, { emoji }).catch((e) => toast(e.message));
+  });
 }
 
 function menuItems(m) {
@@ -832,81 +741,14 @@ function menuItems(m) {
   return items;
 }
 
-function menu(items) {
-  return el("div", { class: "menu" }, items.map(([label, action]) => el("button", {
-    type: "button", onclick: () => { closePopover(); action(); },
-  }, label)));
-}
-
-// One popover at a time, above the button that opened it. It stays until something in it is chosen, or a click
-// elsewhere, Escape or scrolling closes it; its message keeps showing its tools meanwhile.
-let popover = null;
-
-function openPopover(anchor, owner, content) {
-  const reopening = popover && popover.anchor === anchor;
-  closePopover();
-  if (reopening) return;
-  const box = el("div", { class: "popover" }, content);
-  document.body.append(box);
-  owner.classList.add("tools-open");
-  popover = { box, anchor, owner };
-  const a = anchor.getBoundingClientRect();
-  const b = box.getBoundingClientRect();
-  const left = Math.min(Math.max(8, a.left + a.width / 2 - b.width / 2), window.innerWidth - b.width - 8);
-  const above = a.top - b.height - 10 >= 8;
-  box.style.left = `${left}px`;
-  box.style.top = `${above ? a.top - b.height - 10 : a.bottom + 10}px`;
-  box.classList.add(above ? "above" : "below");
-  box.style.setProperty("--arrow-x", `${a.left + a.width / 2 - left}px`);
-}
-
-function closePopover() {
-  if (!popover) return;
-  popover.box.remove();
-  popover.owner.classList.remove("tools-open");
-  popover = null;
-}
-
-document.addEventListener("mousedown", (e) => {
-  if (popover && !popover.box.contains(e.target) && !popover.anchor.contains(e.target)) closePopover();
-});
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePopover(); });
-document.addEventListener("scroll", () => closePopover(), true);
+const ATTACHMENT_KINDS = { "m.image": "image", "m.sticker": "sticker", "m.video": "video", "m.audio": "audio" };
 
 function renderAttachment(a) {
-  const url = `/api/attachments/${a.id}`;
-  const type = a.content_type || "";
-  if (a.status !== "present") {
-    const label = a.status === "purged" ? "Media removed" : "Media not available";
-    return el("div", { class: "missing" }, `${label}${a.filename ? ` (${a.filename})` : ""}`);
-  }
-  let media;
-  if (a.msgtype === "m.image" || a.msgtype === "m.sticker" || (type.startsWith("image/") && a.msgtype !== "m.file")) {
-    media = el("a", { href: url, target: "_blank", rel: "noopener" },
-      el("img", { src: url, loading: "lazy", alt: a.filename || "image", width: a.width || null, height: a.height || null }));
-  } else if (a.msgtype === "m.video" || type.startsWith("video/")) {
-    media = el("video", { src: url, controls: true, preload: "metadata" });
-  } else if (a.msgtype === "m.audio" || type.startsWith("audio/")) {
-    media = el("audio", { src: url, controls: true, preload: "metadata" });
-  } else {
-    media = el("a", { class: "file", href: url, download: a.filename || "" },
-      `📄 ${a.filename || "file"}${a.size ? ` (${formatSize(a.size)})` : ""}`);
-  }
-  return a.caption ? el("div", {}, media, el("div", {}, ...linkify(a.caption))) : media;
-}
-
-const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
-
-function linkify(text) {
-  const out = [];
-  let last = 0;
-  for (const match of text.matchAll(URL_RE)) {
-    if (match.index > last) out.push(text.slice(last, match.index));
-    out.push(el("a", { href: match[0], target: "_blank", rel: "noopener noreferrer" }, match[0]));
-    last = match.index + match[0].length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
+  if (a.status !== "present") return missingAttachmentNode(a.status === "purged", a.filename);
+  return attachmentNode({
+    url: `/api/attachments/${a.id}`, kind: ATTACHMENT_KINDS[a.msgtype] || "file", contentType: a.content_type,
+    filename: a.filename, size: a.size, width: a.width, height: a.height, caption: a.caption,
+  });
 }
 
 // ---------------------------------------------------------------- live events
@@ -1032,7 +874,7 @@ async function openNewChat() {
     list.replaceChildren(...contacts
       .filter((c) => !f || c.name.toLowerCase().includes(f))
       .map((c) => el("li", { onclick: () => start(c) },
-        avatar(c.name, `p${c.person_id}`, c.avatar_sha256), el("span", {}, c.name))));
+        avatar(c.name, `p${c.person_id}`, fileURL(c.avatar_sha256)), el("span", {}, c.name))));
     if (!list.children.length) {
       list.append(el("li", { class: "hint" }, state.canSearchPeople ? `No matches here; try searching ${NETWORK}.` : "No matches here."));
     }
