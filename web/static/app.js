@@ -434,6 +434,7 @@ function renderThreadHeader() {
   if (isMuted(d.summary)) parts.push("muted");
   if (d.summary.read_only) parts.push("imported history only");
   thread.querySelector("#composer").hidden = d.summary.read_only;
+  thread.querySelector(".attach").hidden = Boolean(d.capabilities && !d.capabilities.attachments);
   thread.querySelector('[data-field="subtitle"]').textContent = parts.join(" · ");
 }
 
@@ -449,7 +450,8 @@ function wireThread(thread) {
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = `${input.scrollHeight}px`;
-    if (state.editing) return;
+    const caps = capabilities();
+    if (state.editing || (caps && !caps.typing)) return;
     const now = Date.now();
     if (input.value && now - typingSent > 8000) {
       typingSent = now;
@@ -718,18 +720,32 @@ function renderLinkPreview(p) {
 // bubble; for outgoing messages the row is reversed, so they sit to its left.
 function renderTools(m, node) {
   const tools = el("div", { class: "tools" });
-  tools.append(
-    toolButton("react", "React", (e) => openPopover(e.currentTarget, node, reactionPicker(m))),
-    toolButton("reply", "Reply", () => setReply(m)),
-  );
+  const caps = capabilities();
+  if (!caps || caps.reactions) {
+    tools.append(toolButton("react", "React", (e) => openPopover(e.currentTarget, node, reactionPicker(m))));
+  }
+  if (!caps || caps.reply) tools.append(toolButton("reply", "Reply", () => setReply(m)));
   const items = menuItems(m);
   if (items.length) tools.append(toolButton("more", "More", (e) => openPopover(e.currentTarget, node, menu(items))));
   return tools;
 }
 
+// What the network allows in the open chat (messaging.Capabilities), or null if it hasn't said: then everything is
+// offered, and the network refuses what it doesn't allow.
+function capabilities() {
+  return state.detail ? state.detail.capabilities : null;
+}
+
+// Whether a message is still young enough for an action limited to maxAgeS seconds (null for no limit).
+function withinWindow(m, maxAgeS) {
+  return maxAgeS === null || maxAgeS === undefined || Date.now() - m.sent_at < maxAgeS * 1000;
+}
+
 function reactionPicker(m) {
   const mine = m.reactions.find((r) => r.mine);
-  return emojiPicker(REACTIONS, mine ? mine.emoji : null, (emoji) => {
+  const caps = capabilities();
+  const emojis = (caps && caps.reactions && caps.reactions.emoji) || REACTIONS;
+  return emojiPicker(emojis, mine ? mine.emoji : null, (emoji) => {
     api("POST", `/api/messages/${m.id}/reaction`, { emoji }).catch((e) => toast(e.message));
   });
 }
@@ -737,8 +753,11 @@ function reactionPicker(m) {
 function menuItems(m) {
   const items = [];
   const sent = m.outgoing && m.status !== "pending" && m.status !== "failed";
-  if (sent && m.body && !m.attachments.length) items.push(["Edit", () => setEditing(m)]);
-  if (sent) {
+  const caps = capabilities();
+  const canEdit = !caps || (caps.edit && withinWindow(m, caps.edit.max_age_s));
+  const canUnsend = !caps || (caps.unsend && withinWindow(m, caps.unsend.max_age_s));
+  if (sent && canEdit && m.body && !m.attachments.length) items.push(["Edit", () => setEditing(m)]);
+  if (sent && canUnsend) {
     items.push(["Unsend", async () => {
       if (!confirm("Unsend this message for everyone?")) return;
       await api("DELETE", `/api/messages/${m.id}`).catch((e) => toast(e.message));
