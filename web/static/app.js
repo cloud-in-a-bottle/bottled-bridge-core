@@ -379,13 +379,15 @@ async function openConversation(id, highlightMessageId) {
   renderThreadHeader();
   if (highlightMessageId) {
     const loc = await api("GET", `/api/messages/${highlightMessageId}/location`);
-    // Load a page ending just after the target so it is on screen.
-    const page = await api("GET", `/api/conversations/${id}/messages?before=${loc.sent_at + 1}&limit=${PAGE_SIZE}`);
+    // Load a page ending with the target so it is on screen, then the newest messages after it.
+    const target = { sent_at: loc.sent_at, id: highlightMessageId };
+    const page = await api("GET",
+      `/api/conversations/${id}/messages?before=${loc.sent_at}&before_id=${highlightMessageId + 1}&limit=${PAGE_SIZE}`);
     const after = await api("GET", `/api/conversations/${id}/messages?limit=${PAGE_SIZE}`);
     state.messages = page.messages;
     state.hasMore = page.has_more;
-    if (after.messages.length && after.messages[0].sent_at > loc.sent_at) {
-      state.messages = state.messages.concat(after.messages.filter((m) => m.sent_at > loc.sent_at));
+    if (after.messages.length && isAfter(after.messages[0], target)) {
+      state.messages = state.messages.concat(after.messages.filter((m) => isAfter(m, target)));
     }
   } else {
     const page = await api("GET", `/api/conversations/${id}/messages?limit=${PAGE_SIZE}`);
@@ -567,7 +569,7 @@ function setEditing(message) {
 async function loadMore() {
   if (!state.messages.length) return reloadActive();
   const page = await api("GET",
-    `/api/conversations/${state.activeId}/messages?before=${state.messages[0].sent_at}&limit=${PAGE_SIZE}`);
+    `/api/conversations/${state.activeId}/messages?before=${state.messages[0].sent_at}&before_id=${state.messages[0].id}&limit=${PAGE_SIZE}`);
   state.messages = page.messages.concat(state.messages);
   state.hasMore = page.has_more;
   renderMessages({ scroll: "keep" });
@@ -584,14 +586,19 @@ async function reloadActive() {
   state.detail = detail;
   renderThreadHeader();
   // Replace the newest page in place, keeping any older messages already loaded.
-  const oldestNew = newest.messages.length ? newest.messages[0].sent_at : Infinity;
-  const older = state.messages.filter((m) => m.sent_at < oldestNew);
+  const oldestNew = newest.messages[0];
+  const older = oldestNew ? state.messages.filter((m) => isAfter(oldestNew, m)) : state.messages;
   state.messages = older.concat(newest.messages);
   if (!older.length) state.hasMore = newest.has_more;
   const box = app.querySelector("#messages");
   const atBottom = box && box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   renderMessages({ scroll: atBottom ? "bottom" : "keep" });
   if (document.visibilityState === "visible") markRead();
+}
+
+// Whether message a comes after b in the timeline: by when they were sent, then by ID.
+function isAfter(a, b) {
+  return a.sent_at > b.sent_at || (a.sent_at === b.sent_at && a.id > b.id);
 }
 
 let markReadTimer;

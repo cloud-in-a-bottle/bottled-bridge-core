@@ -178,7 +178,7 @@ func (h *Harness) ConversationID(key networkid.PortalKey) int64 {
 
 func (h *Harness) Messages(key networkid.PortalKey) []store.Message {
 	h.T.Helper()
-	page, err := h.Store.MessagesPage(h.Ctx, h.ConversationID(key), 0, 100)
+	page, err := h.Store.MessagesPage(h.Ctx, h.ConversationID(key), nil, 100)
 	if err != nil {
 		h.T.Fatal(err)
 	}
