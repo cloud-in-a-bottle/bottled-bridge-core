@@ -1,6 +1,7 @@
 package bridge_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -52,5 +53,24 @@ func TestWaitingLoginCanBeShownAndCancelled(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("the wait didn't end on cancel")
+	}
+}
+
+// A QR code wait whose request goes away (eg a page reload) ends the login, as WhatsApp does on its side.
+func TestAbandonedWaitEndsLogin(t *testing.T) {
+	h := bridgetest.New(t)
+	if err := h.Svc.Logout(h.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Svc.StartLogin(h.Ctx, "qr"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(h.Ctx, 50*time.Millisecond)
+	defer cancel()
+	if _, err := h.Svc.WaitLogin(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected the wait to end with its context, got %v", err)
+	}
+	if step := h.Svc.LoginStep(); step != nil {
+		t.Fatalf("expected no login in progress, got %+v", step)
 	}
 }

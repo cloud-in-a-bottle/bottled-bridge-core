@@ -118,6 +118,12 @@ func (s *Service) WaitLogin(ctx context.Context) (*bridgev2.LoginStep, error) {
 	if s.login != pending {
 		// Cancelled (or replaced by a new login) while waiting.
 		return nil, ErrNoLogin
+	} else if err != nil && ctx.Err() != nil && showsPairingCode(pending.step) {
+		// The browser went away (eg the page was reloaded) while showing a QR or pairing code. WhatsApp ends that
+		// login when the wait's context ends, so drop it rather than leave a dead code for the next page load to show.
+		// Other waits (eg Meta's "approve on another device") carry on when waited on again.
+		s.cancelLoginLocked()
+		return nil, err
 	} else if err != nil {
 		return nil, err
 	}
@@ -151,4 +157,9 @@ func (s *Service) advanceLocked(ctx context.Context, step *bridgev2.LoginStep) (
 	}
 	s.broker.Publish("account", s.Account(ctx))
 	return step, nil
+}
+
+func showsPairingCode(step *bridgev2.LoginStep) bool {
+	params := step.DisplayAndWaitParams
+	return params != nil && (params.Type == bridgev2.LoginDisplayTypeQR || params.Type == bridgev2.LoginDisplayTypeCode)
 }
