@@ -26,7 +26,8 @@ module replaces the second half:
   conservative about traffic), drives logins, turns UI actions into the Matrix-shaped events the bridge expects from a
   client, and fetches older history a page at a time on request (`LoadOlder`).
 - `web/` is the HTTP API and the UI (plain JS modules embedded in the binary, no build step), with live updates over
-  SSE (`/api/events`). The app brands it (`web.Branding`), supplies its icons, and can add routes and settings
+  SSE (`/api/events`). Its files are the `web/static` package, so a UI with the same look (the inbox app's)
+  can import `ui.js` and `app.css` without the rest of the core. The app brands it (`web.Branding`), supplies its icons, and can add routes and settings
   sections (eg Messenger's importer).
 - `web/messaging*.go` provides the [messaging service](https://github.com/cloud-in-a-bottle/messaging-service-spec)
   to other apps, under `/messaging/`, when the app sets `web.Options.Messaging`: the same store and bridge, in the

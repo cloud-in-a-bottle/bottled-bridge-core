@@ -3,7 +3,6 @@
 package web
 
 import (
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,20 +19,8 @@ import (
 	"github.com/cloud-in-a-bottle/bottled-bridge-core/events"
 	"github.com/cloud-in-a-bottle/bottled-bridge-core/files"
 	"github.com/cloud-in-a-bottle/bottled-bridge-core/store"
+	"github.com/cloud-in-a-bottle/bottled-bridge-core/web/static"
 )
-
-//go:embed static
-var staticFS embed.FS
-
-// StaticFS is the UI's static files, as served under /static/. ui.js (the UI's building blocks) and app.css are for
-// other UIs with the same look too, eg the inbox app's.
-func StaticFS() fs.FS {
-	sub, err := fs.Sub(staticFS, "static")
-	if err != nil {
-		panic(err)
-	}
-	return sub
-}
 
 // appStaticFiles must be in Options.Static.
 var appStaticFiles = []string{"favicon.svg", "apple-touch-icon.png"}
@@ -101,7 +88,7 @@ func New(opts Options) (*Server, error) {
 		WriteJSON(w, healthResponse{Status: "ok"})
 	})
 	mux.HandleFunc("GET /{$}", s.serveIndex)
-	mux.Handle("GET /static/", http.FileServerFS(staticFS))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static.FS)))
 	mux.Handle("GET /static/app/", http.StripPrefix("/static/app/", http.FileServerFS(opts.Static)))
 
 	mux.HandleFunc("GET /api/state", s.state)

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"html/template"
 	"io/fs"
+
+	"github.com/cloud-in-a-bottle/bottled-bridge-core/web/static"
 )
 
 // Branding is what makes the UI one network's client. Texts are plain text unless noted.
@@ -65,7 +67,7 @@ type indexData struct {
 }
 
 func renderIndex(b Branding) ([]byte, error) {
-	src, err := fs.ReadFile(staticFS, "static/index.html")
+	src, err := fs.ReadFile(static.FS, "index.html")
 	if err != nil {
 		return nil, err
 	}
