@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/rs/zerolog"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 
 	"github.com/cloud-in-a-bottle/bottled-bridge-core/bridge"
@@ -115,6 +116,7 @@ func New(opts Options) (*Server, error) {
 	mux.HandleFunc("DELETE /api/messages/{id}", s.unsend)
 	mux.HandleFunc("POST /api/messages/{id}/retry", s.retry)
 	mux.HandleFunc("POST /api/messages/{id}/discard", s.discard)
+	mux.HandleFunc("POST /api/messages/{id}/viewed", s.viewed)
 	mux.HandleFunc("GET /api/messages/{id}/location", s.location)
 	mux.HandleFunc("GET /api/attachments/{id}", s.attachment)
 	mux.HandleFunc("GET /api/files/{sha}", s.file)
@@ -168,6 +170,7 @@ func writeError(w http.ResponseWriter, status int, detail string) {
 // for BadRequest errors, and 500 (logged) for anything else.
 func (s *Server) Fail(w http.ResponseWriter, r *http.Request, err error) {
 	var respErr bridgev2.RespError
+	var mxErr mautrix.RespError
 	var statusErr bridgev2.MessageStatus
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -176,8 +179,12 @@ func (s *Server) Fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, bridge.ErrNoLogin):
 		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, bridge.ErrNotViewOnce):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.As(err, &respErr):
 		writeError(w, http.StatusBadRequest, respErr.Err)
+	case errors.As(err, &mxErr):
+		writeError(w, http.StatusBadRequest, mxErr.Err)
 	case errors.As(err, &statusErr):
 		writeError(w, http.StatusBadRequest, statusErr.Error())
 	case errors.As(err, new(clientError)):

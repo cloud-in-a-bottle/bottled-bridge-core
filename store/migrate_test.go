@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	_ "go.mau.fi/util/dbutil/litestream"
@@ -42,7 +43,7 @@ func TestMigratesUnversionedDatabase(t *testing.T) {
 			t.Fatalf("self after migration: %q, %v", remoteID, err)
 		}
 		version, _, err := st.GetKV(t.Context(), schemaVersionKey)
-		if err != nil || version != "1" {
+		if err != nil || version != strconv.Itoa(len(migrations)) {
 			t.Fatalf("schema version %q, %v", version, err)
 		}
 		_ = st.Close()
@@ -56,7 +57,7 @@ func TestNewDatabaseStartsAtLatestVersion(t *testing.T) {
 	}
 	defer st.Close()
 	version, _, err := st.GetKV(t.Context(), schemaVersionKey)
-	if err != nil || version != "1" {
+	if err != nil || version != strconv.Itoa(len(migrations)) {
 		t.Fatalf("schema version %q, %v", version, err)
 	}
 }

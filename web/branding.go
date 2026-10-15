@@ -27,6 +27,9 @@ type Branding struct {
 	LoginFallbackHint string `json:"login_fallback_hint"`
 	// Settings › History: how much history this app gets from the network, and how.
 	HistoryHelp string `json:"history_help"`
+	// Settings › Log out: what logging out does. Empty uses a generic text (it signs this server out of the network,
+	// and logging in again picks up where it left off).
+	LogoutHint string `json:"logout_hint,omitempty"`
 	// Set when chats can be started with something the user types, eg "Phone number": ResolveIdentifier gets it.
 	IdentifierLabel       string `json:"identifier_label,omitempty"`
 	IdentifierPlaceholder string `json:"identifier_placeholder,omitempty"`

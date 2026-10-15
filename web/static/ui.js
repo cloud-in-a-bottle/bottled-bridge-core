@@ -87,6 +87,38 @@ export function linkify(text) {
   return out;
 }
 
+// The tags a message's formatted text may use, as the tags to show them with. Anything else keeps only its text.
+const RICH_TAGS = {
+  STRONG: "strong", B: "strong", EM: "em", I: "em", DEL: "del", S: "del", STRIKE: "del", U: "u", CODE: "code",
+  PRE: "pre", BLOCKQUOTE: "blockquote", P: "p", BR: "br", UL: "ul", OL: "ol", LI: "li",
+};
+
+// Formatted message text (HTML, as the bridge stores it) as nodes to append: styles, spoilers (click to reveal),
+// mentions, and links, with everything else (scripts, attributes, unknown tags) dropped.
+export function richText(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const convert = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) return linkify(node.textContent);
+    if (node.nodeType !== Node.ELEMENT_NODE) return [];
+    const children = [...node.childNodes].flatMap(convert);
+    if (node.tagName === "A") {
+      const href = node.getAttribute("href") || "";
+      // Links to people (matrix.to user links) are mentions.
+      if (/^https:\/\/matrix\.to\/#\/@/.test(href)) return [el("span", { class: "mention" }, node.textContent)];
+      if (/^https?:\/\//.test(href)) return [el("a", { href, target: "_blank", rel: "noopener noreferrer" }, node.textContent)];
+      return children;
+    }
+    if (node.tagName === "SPAN" && node.hasAttribute("data-mx-spoiler")) {
+      const spoiler = el("span", { class: "spoiler", title: "Spoiler: click to show" }, children);
+      spoiler.addEventListener("click", () => spoiler.classList.add("revealed"), { once: true });
+      return [spoiler];
+    }
+    const tag = RICH_TAGS[node.tagName];
+    return tag ? [el(tag, {}, children)] : children;
+  };
+  return [...doc.body.childNodes].flatMap(convert);
+}
+
 // An attachment that's there to show. kind is one of image, sticker, video, audio, voice or file.
 export function attachmentNode({ url, kind, contentType, filename, size, width, height, caption }) {
   const type = contentType || "";

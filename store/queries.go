@@ -58,7 +58,7 @@ const summaryColumns = `c.id, c.kind, ` + conversationNameSQL + `, coalesce(c.av
 					FROM attachments at WHERE at.message_id = m.id ORDER BY at.ordinal LIMIT 1), '')
 			END
 		FROM messages m JOIN people a ON a.id = m.author_id
-		WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), '')`
+		WHERE m.conversation_id = c.id AND NOT m.quiet ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), '')`
 
 const summaryFrom = ` FROM conversations c LEFT JOIN people op ON op.id = c.other_person_id`
 
@@ -161,26 +161,30 @@ type Reaction struct {
 }
 
 type Message struct {
-	ID             int64           `json:"id"`
-	ConversationID int64           `json:"-"`
-	AuthorID       int64           `json:"author_id"`
-	AuthorRemote   string          `json:"-"`
-	AuthorAvatar   string          `json:"-"`
-	AuthorName     string          `json:"author_name"`
-	Outgoing       bool            `json:"outgoing"`
-	SentAt         int64           `json:"sent_at"`
-	Kind           string          `json:"kind"`
-	MsgType        string          `json:"msgtype"`
-	Body           string          `json:"body"`
-	EditedAt       int64           `json:"edited_at,omitempty"`
-	Deleted        bool            `json:"deleted"`
-	ExpiresAt      int64           `json:"expires_at,omitempty"`
-	Status         string          `json:"status,omitempty"`
-	Error          string          `json:"error,omitempty"`
-	Quote          *Quote          `json:"quote"`
-	LinkPreviews   json.RawMessage `json:"link_previews,omitempty"`
-	Attachments    []Attachment    `json:"attachments"`
-	Reactions      []Reaction      `json:"reactions"`
+	ID             int64  `json:"id"`
+	ConversationID int64  `json:"-"`
+	AuthorID       int64  `json:"author_id"`
+	AuthorRemote   string `json:"-"`
+	AuthorAvatar   string `json:"-"`
+	AuthorName     string `json:"author_name"`
+	Outgoing       bool   `json:"outgoing"`
+	SentAt         int64  `json:"sent_at"`
+	Kind           string `json:"kind"`
+	MsgType        string `json:"msgtype"`
+	Body           string `json:"body"`
+	// HTML with the message's formatting (styles, mentions), if it has any; Body is the plain text.
+	FormattedBody string `json:"formatted_body,omitempty"`
+	// View-once media, whose attachments are purged once viewed.
+	ViewOnce     bool            `json:"view_once,omitempty"`
+	EditedAt     int64           `json:"edited_at,omitempty"`
+	Deleted      bool            `json:"deleted"`
+	ExpiresAt    int64           `json:"expires_at,omitempty"`
+	Status       string          `json:"status,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	Quote        *Quote          `json:"quote"`
+	LinkPreviews json.RawMessage `json:"link_previews,omitempty"`
+	Attachments  []Attachment    `json:"attachments"`
+	Reactions    []Reaction      `json:"reactions"`
 }
 
 type MessagePage struct {
@@ -199,7 +203,7 @@ func (s *Store) MessagesPage(ctx context.Context, conversationID int64, before *
 
 const messageColumns = `m.id, m.conversation_id, m.author_id, a.remote_id, coalesce(a.name, ''),
 	coalesce(a.avatar_sha256, ''), a.is_self, m.sent_at, m.kind, coalesce(m.msgtype, ''), coalesce(m.body, ''),
-	coalesce(m.edited_at, 0), m.deleted_at IS NOT NULL, coalesce(m.expires_at, 0), coalesce(m.status, ''),
+	coalesce(m.formatted_body, ''), m.view_once, coalesce(m.edited_at, 0), m.deleted_at IS NOT NULL, coalesce(m.expires_at, 0), coalesce(m.status, ''),
 	coalesce(m.error, ''), coalesce(m.link_previews, ''), coalesce(q.id, 0), coalesce(qa.name, ''), coalesce(q.body, ''),
 	(SELECT max(rr.read_up_to) FROM read_receipts rr WHERE rr.conversation_id = m.conversation_id
 		AND rr.person_id != m.author_id)`
@@ -226,7 +230,7 @@ func (s *Store) loadMessages(ctx context.Context, where string, args []any, orde
 		var quoteAuthor, quoteText string
 		var readUpTo sql.NullInt64
 		if err = rows.Scan(&m.ID, &m.ConversationID, &m.AuthorID, &m.AuthorRemote, &m.AuthorName, &m.AuthorAvatar,
-			&m.Outgoing, &m.SentAt, &m.Kind, &m.MsgType, &m.Body, &m.EditedAt, &m.Deleted, &m.ExpiresAt, &m.Status,
+			&m.Outgoing, &m.SentAt, &m.Kind, &m.MsgType, &m.Body, &m.FormattedBody, &m.ViewOnce, &m.EditedAt, &m.Deleted, &m.ExpiresAt, &m.Status,
 			&m.Error, &linkPreviews, &quoteID, &quoteAuthor, &quoteText, &readUpTo); err != nil {
 			_ = rows.Close()
 			return nil, err

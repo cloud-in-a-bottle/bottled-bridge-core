@@ -68,6 +68,11 @@ func (c *Connector) applyTimelineEvent(ctx context.Context, tx *store.Tx, te tim
 	}
 	log := zerolog.Ctx(ctx).With().Stringer("event_id", te.eventID).Logger()
 
+	if action, _ := te.content.Raw["com.beeper.action_message"].(map[string]any); action != nil && action["type"] == "disappearing_timer" {
+		// The bridge announces a disappearing-timer change with this notice as well as the change itself, which is
+		// already in the timeline.
+		return nil
+	}
 	switch te.evtType {
 	case event.EventMessage, event.EventSticker:
 		msg, ok := te.content.Parsed.(*event.MessageEventContent)
@@ -146,8 +151,11 @@ func (c *Connector) convertMessage(conversationID, authorID int64, te timelineEv
 		part.Kind = "update"
 		part.MsgType = "notice"
 	}
-	if timer := msg.BeeperDisappearingTimer; timer != nil && timer.Type == event.DisappearingTypeAfterSend && timer.Timer.Duration > 0 {
-		part.ExpiresAt = te.ts + timer.Timer.Milliseconds()
+	if timer := msg.BeeperDisappearingTimer; timer != nil && timer.Type != event.DisappearingTypeNone && timer.Timer.Duration > 0 {
+		part.DisappearTimerMS = timer.Timer.Milliseconds()
+		if timer.Type == event.DisappearingTypeAfterSend {
+			part.ExpiresAt = te.ts + timer.Timer.Milliseconds()
+		}
 	}
 	if len(msg.BeeperLinkPreviews) > 0 {
 		if previews, err := json.Marshal(msg.BeeperLinkPreviews); err == nil {
@@ -157,6 +165,7 @@ func (c *Connector) convertMessage(conversationID, authorID int64, te timelineEv
 	if msg.MsgType == event.MsgLocation && msg.GeoURI != "" && !strings.Contains(msg.Body, msg.GeoURI) {
 		part.Body = strings.TrimSpace(msg.Body + "\n" + msg.GeoURI)
 	}
+	part.ViewOnce = msg.BeeperViewLimited != nil
 	isSticker := te.evtType == event.EventSticker
 	if isSticker || msg.MsgType.IsMedia() {
 		part.Attachment = convertAttachment(msg, isSticker)

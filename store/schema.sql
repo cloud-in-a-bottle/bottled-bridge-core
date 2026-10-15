@@ -74,6 +74,14 @@ CREATE TABLE IF NOT EXISTS messages (
     edited_at INTEGER,
     deleted_at INTEGER,
     expires_at INTEGER,
+    -- The message's disappearing-messages timer, if it has one. expires_at is set once it's known when it runs out
+    -- (for a timer that starts when the message is read, only once it's read).
+    disappear_timer_ms INTEGER NOT NULL DEFAULT 0,
+    -- View-once media: its attachments are purged once viewed.
+    view_once INTEGER NOT NULL DEFAULT 0,
+    -- An update that doesn't count as activity: it neither moves the chat up the list nor becomes its preview (eg a
+    -- safety number change).
+    quiet INTEGER NOT NULL DEFAULT 0,
     -- Only for messages sent from this account.
     status TEXT CHECK (status IN ('pending', 'sent', 'delivered', 'failed')),
     error TEXT,
