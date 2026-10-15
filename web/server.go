@@ -131,7 +131,24 @@ func New(opts Options) (*Server, error) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if crossSite(r) {
+		writeError(w, http.StatusForbidden, "cross-site request refused")
+		return
+	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// crossSite reports whether a request that changes something comes from another site's page. OpenHost's login cookie
+// is SameSite=Lax, and every app on an instance is the same site, so a page from another app could otherwise send
+// messages, link devices, ... with the owner's cookie. Browsers say where a request comes from in Sec-Fetch-Site;
+// requests from programs (eg other apps using the messaging service through the router) don't have it.
+func crossSite(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	site := r.Header.Get("Sec-Fetch-Site")
+	return site != "" && site != "same-origin" && site != "none"
 }
 
 // Handle adds an app route, eg for an importer. App routes should live under /api/.

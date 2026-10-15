@@ -51,6 +51,7 @@ const summaryColumns = `c.id, c.kind, ` + conversationNameSQL + `, coalesce(c.av
 	coalesce((SELECT CASE
 			WHEN m.kind = 'update' THEN coalesce(a.name, '') || ' ' || coalesce(m.body, '')
 			WHEN m.deleted_at IS NOT NULL THEN 'Message deleted'
+			WHEN m.view_once THEN (CASE WHEN a.is_self THEN 'You: ' ELSE '' END) || 'View-once media'
 			ELSE (CASE WHEN a.is_self THEN 'You: ' WHEN c.kind = 'group' THEN coalesce(a.name, '?') || ': ' ELSE '' END)
 				|| coalesce(nullif(m.body, ''), (SELECT CASE at.msgtype
 					WHEN 'm.image' THEN '📷 Photo' WHEN 'm.video' THEN '🎞 Video' WHEN 'm.audio' THEN '🎤 Audio'

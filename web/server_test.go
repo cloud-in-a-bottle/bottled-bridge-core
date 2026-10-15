@@ -153,3 +153,40 @@ func TestConversationCarriesCapabilities(t *testing.T) {
 		t.Fatalf("unexpected capabilities: %s", body)
 	}
 }
+
+func TestCrossSiteRequestsAreRefused(t *testing.T) {
+	srv, _ := newServer(t)
+	cases := []struct {
+		method, site string
+		status       int
+	}{
+		{http.MethodPost, "cross-site", http.StatusForbidden},
+		// Every app on an OpenHost instance is the same site.
+		{http.MethodPost, "same-site", http.StatusForbidden},
+		{http.MethodPost, "same-origin", http.StatusNoContent},
+		// Programs, eg the router passing on another app's messaging-service call.
+		{http.MethodPost, "", http.StatusNoContent},
+		{http.MethodGet, "cross-site", http.StatusOK},
+	}
+	for _, c := range cases {
+		path := "/api/login/cancel"
+		if c.method == http.MethodGet {
+			path = "/health"
+		}
+		req, err := http.NewRequest(c.method, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.site != "" {
+			req.Header.Set("Sec-Fetch-Site", c.site)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != c.status {
+			t.Errorf("%s with Sec-Fetch-Site %q: %d, want %d", c.method, c.site, resp.StatusCode, c.status)
+		}
+	}
+}

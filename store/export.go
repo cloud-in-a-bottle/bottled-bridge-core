@@ -155,7 +155,9 @@ type ExportReplyTarget struct {
 }
 
 type ExportMessage struct {
-	ID             int64
+	ID int64
+	// The event ID of its first part, which the bridge's records of the message refer to.
+	EventID        string
 	ConversationID int64
 	AuthorRemoteID string
 	// The network's message ID; empty for messages without one (eg from an export without IDs).
@@ -209,7 +211,8 @@ func (s *Store) ExportMessages(ctx context.Context, fn func(ExportMessage) error
 
 func (s *Store) exportPage(ctx context.Context, after Position) ([]ExportMessage, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id, m.conversation_id, a.remote_id, coalesce(m.remote_id, ''), m.sent_at, m.received_at, m.kind,
+		SELECT m.id, (SELECT event_id FROM message_parts WHERE message_id = m.id ORDER BY rowid LIMIT 1),
+			m.conversation_id, a.remote_id, coalesce(m.remote_id, ''), m.sent_at, m.received_at, m.kind,
 			coalesce(m.msgtype, ''), coalesce(m.body, ''), coalesce(m.formatted_body, ''), coalesce(m.link_previews, ''),
 			coalesce(m.edited_at, 0), coalesce(m.deleted_at, 0), coalesce(m.expires_at, 0), m.disappear_timer_ms,
 			m.view_once, m.quiet,
@@ -228,7 +231,7 @@ func (s *Store) exportPage(ctx context.Context, after Position) ([]ExportMessage
 	for rows.Next() {
 		var m ExportMessage
 		var q ExportReplyTarget
-		if err = rows.Scan(&m.ID, &m.ConversationID, &m.AuthorRemoteID, &m.RemoteID, &m.SentAt, &m.ReceivedAt, &m.Kind,
+		if err = rows.Scan(&m.ID, &m.EventID, &m.ConversationID, &m.AuthorRemoteID, &m.RemoteID, &m.SentAt, &m.ReceivedAt, &m.Kind,
 			&m.MsgType, &m.Body, &m.FormattedBody, &m.LinkPreviews, &m.EditedAt, &m.DeletedAt, &m.ExpiresAt,
 			&m.DisappearTimerMS, &m.ViewOnce, &m.Quiet, &m.Status, &m.Source, &q.RemoteID, &q.AuthorRemoteID, &q.SentAt, &q.Body); err != nil {
 			_ = rows.Close()
