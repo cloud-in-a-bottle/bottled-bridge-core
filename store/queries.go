@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 )
 
@@ -189,22 +188,13 @@ type MessagePage struct {
 	HasMore  bool      `json:"has_more"`
 }
 
-// MessagesPage returns up to limit messages sent before `before` (or the newest, if zero), oldest first.
-func (s *Store) MessagesPage(ctx context.Context, conversationID, before int64, limit int) (MessagePage, error) {
-	if before == 0 {
-		before = 1 << 62
-	}
-	msgs, err := s.loadMessages(ctx, "m.conversation_id = ? AND m.sent_at < ?", []any{conversationID, before},
-		"m.sent_at DESC, m.id DESC", limit+1)
+// MessagesPage returns up to limit messages before `before` (or the newest, if nil), oldest first.
+func (s *Store) MessagesPage(ctx context.Context, conversationID int64, before *Position, limit int) (MessagePage, error) {
+	msgs, more, err := s.Before(ctx, conversationID, before, limit)
 	if err != nil {
 		return MessagePage{}, err
 	}
-	page := MessagePage{HasMore: len(msgs) > limit, Messages: msgs}
-	if page.HasMore {
-		page.Messages = msgs[:limit]
-	}
-	slices.Reverse(page.Messages)
-	return page, nil
+	return MessagePage{Messages: msgs, HasMore: more}, nil
 }
 
 const messageColumns = `m.id, m.conversation_id, m.author_id, a.remote_id, coalesce(a.name, ''),

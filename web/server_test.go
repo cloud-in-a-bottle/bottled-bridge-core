@@ -11,6 +11,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"maunium.net/go/mautrix/bridgev2/networkid"
+
 	"github.com/cloud-in-a-bottle/bottled-bridge-core/bridgetest"
 	"github.com/cloud-in-a-bottle/bottled-bridge-core/web"
 )
@@ -92,5 +94,43 @@ func TestHistoryEndpoint(t *testing.T) {
 	status, body := get(t, ts.URL+"/api/conversations/"+strconv.FormatInt(h.ConversationID(bridgetest.DMKey()), 10)+"/history")
 	if status != http.StatusOK || !strings.Contains(body, `"has_more":true`) {
 		t.Fatalf("unexpected history (%d): %s", status, body)
+	}
+}
+
+// Paging back with before and before_id neither skips nor repeats messages sent at the same millisecond.
+func TestMessagesPageThroughTies(t *testing.T) {
+	ts, h := newServer(t)
+	at := time.UnixMilli(1_700_000_000_000)
+	for _, id := range []string{"a", "b", "c"} {
+		h.Queue(bridgetest.TextMessage(bridgetest.DMKey(), "alice", networkid.MessageID("m-"+id), id, at))
+	}
+	base := ts.URL + "/api/conversations/" + strconv.FormatInt(h.ConversationID(bridgetest.DMKey()), 10) + "/messages"
+	var page struct {
+		Messages []struct {
+			ID     int64  `json:"id"`
+			Body   string `json:"body"`
+			SentAt int64  `json:"sent_at"`
+		} `json:"messages"`
+		HasMore bool `json:"has_more"`
+	}
+	got := ""
+	url := base + "?limit=1"
+	for {
+		status, body := get(t, url)
+		if status != http.StatusOK {
+			t.Fatalf("unexpected page (%d): %s", status, body)
+		}
+		if err := json.Unmarshal([]byte(body), &page); err != nil {
+			t.Fatal(err)
+		}
+		got = page.Messages[0].Body + got
+		if !page.HasMore {
+			break
+		}
+		first := page.Messages[0]
+		url = base + "?limit=1&before=" + strconv.FormatInt(first.SentAt, 10) + "&before_id=" + strconv.FormatInt(first.ID, 10)
+	}
+	if got != "abc" {
+		t.Fatalf("paged out %q", got)
 	}
 }

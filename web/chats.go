@@ -125,17 +125,28 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		s.Fail(w, r, err)
 		return
 	}
+	// Messages before (before, before_id): a message's sent_at and ID, so a page never splits messages sent at the
+	// same millisecond. Without before_id, before every message sent at `before`.
 	before, err := QueryInt(r, "before", 0)
 	if err != nil {
 		s.Fail(w, r, err)
 		return
+	}
+	beforeID, err := QueryInt(r, "before_id", 0)
+	if err != nil {
+		s.Fail(w, r, err)
+		return
+	}
+	var pos *store.Position
+	if before != 0 {
+		pos = &store.Position{SentAt: before, ID: beforeID}
 	}
 	limit, err := QueryInt(r, "limit", 50)
 	if err != nil {
 		s.Fail(w, r, err)
 		return
 	}
-	page, err := s.store.MessagesPage(r.Context(), id, before, int(min(max(limit, 1), 500)))
+	page, err := s.store.MessagesPage(r.Context(), id, pos, int(min(max(limit, 1), 500)))
 	if err != nil {
 		s.Fail(w, r, err)
 		return
