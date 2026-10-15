@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -302,12 +303,8 @@ func (s *Service) Edit(ctx context.Context, messageID int64, body string) error 
 	if err != nil {
 		return err
 	}
-	newContent := &event.MessageEventContent{MsgType: event.MsgText, Body: body}
-	content := &event.MessageEventContent{
-		MsgType:    event.MsgText,
-		Body:       "* " + body,
-		NewContent: newContent,
-	}
+	// SetEdit makes this the new content and wraps it in the edit (with the "* " fallback body).
+	content := &event.MessageEventContent{MsgType: event.MsgText, Body: body}
 	content.SetEdit(id.EventID(target.TextEventID))
 	evt := s.newEvent(id.RoomID(target.RoomID), event.EventMessage, content)
 	if err = s.queue(evt); err != nil {
@@ -392,4 +389,27 @@ func (s *Service) applyLocally(ctx context.Context, fn func(tx *store.Tx) error)
 		s.broker.Publish("conversation", events.ConversationChanged{ConversationID: conversationID})
 	}
 	return nil
+}
+
+// ErrNotViewOnce is returned for MarkViewed on a message that isn't view-once media, or was opened already.
+var ErrNotViewOnce = errors.New("not an unopened view-once message")
+
+// MarkViewed tells the network the owner opened a view-once message. Its media is then removed here, as on the
+// network's own apps.
+func (s *Service) MarkViewed(ctx context.Context, messageID int64) error {
+	login := s.CurrentLogin(ctx)
+	if login == nil {
+		return ErrNotLoggedIn
+	}
+	msg, err := s.store.MessageByID(ctx, messageID)
+	if err != nil {
+		return err
+	} else if !msg.ViewOnce || !slices.ContainsFunc(msg.Attachments, func(a store.Attachment) bool { return a.Status == "present" }) {
+		return ErrNotViewOnce
+	}
+	target, err := s.store.MessageTarget(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	return s.br.ViewLimitedMedia(ctx, login, id.EventID(target.FirstEventID), &event.BeeperViewLimitedMedia{Type: "count", Count: 1})
 }

@@ -165,6 +165,18 @@ label.check input { width: auto; }
 .bubble audio { max-width: 260px; display: block; }
 .bubble .file { display: block; padding: 4px 0; }
 .bubble .missing { font-size: 13px; opacity: .75; font-style: italic; }
+.bubble .text :is(p, ul, ol, pre, blockquote) { margin: 2px 0; }
+.bubble .text code { font-family: ui-monospace, monospace; font-size: .92em; }
+.bubble .text blockquote { border-left: 3px solid currentColor; padding-left: 8px; opacity: .85; }
+.bubble .mention { font-weight: 600; }
+.bubble .spoiler { background: currentColor; border-radius: 3px; cursor: pointer; }
+.bubble .spoiler.revealed { background: rgba(127,127,127,.25); cursor: auto; }
+.bubble .view-once {
+  border: 1px solid currentColor; border-radius: 14px; padding: 4px 12px; background: none; color: inherit;
+  font: inherit; cursor: pointer;
+}
+.view-once-viewer { cursor: zoom-out; }
+.view-once-viewer :is(img, video) { max-width: 100%; max-height: 90vh; border-radius: 8px; }
 .bubble.sticker { background: none; padding: 0; }
 .bubble.sticker img { max-width: 140px; max-height: 140px; }
 .link-preview {

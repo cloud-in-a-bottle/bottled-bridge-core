@@ -1,7 +1,7 @@
 import { openStorage } from "/static/storage.js";
 import {
   attachmentNode, avatar, closePopover, el, formatDay, formatDuration, formatTime, linkify, menu,
-  missingAttachmentNode, openPopover, reactionPicker as emojiPicker, reactionsNode, tapToShowTools, template, toast,
+  missingAttachmentNode, openPopover, reactionPicker as emojiPicker, reactionsNode, richText, tapToShowTools, template, toast,
   toolButton,
 } from "/static/ui.js";
 
@@ -176,7 +176,7 @@ function renderLoginStep(step) {
         submit(Object.fromEntries(fields.map((f) => [f.id, form.querySelector(`[name="${f.id}"]`).value])), go);
       },
     });
-    if (step.instructions) form.append(el("p", {}, step.instructions));
+    if (step.instructions) form.append(el("p", {}, ...linkify(step.instructions)));
     for (const f of fields) {
       let input;
       if (f.type === "select") {
@@ -203,7 +203,7 @@ function renderLoginStep(step) {
     if (d.type === "code" || d.type === "emoji") shown = el("p", { class: "display-code" }, d.data || "");
     // The server renders the step's QR code; the timestamp makes each new code (they rotate) load afresh.
     if (d.type === "qr") shown = el("img", { class: "login-qr", src: `/api/login/qr?t=${Date.now()}`, alt: "QR code" });
-    box.replaceChildren(el("h2", {}, "Waiting…"), el("p", {}, step.instructions || "Waiting for confirmation."), shown, actions);
+    box.replaceChildren(el("h2", {}, "Waiting…"), el("p", {}, ...linkify(step.instructions || "Waiting for confirmation.")), shown, actions);
     actions.append(cancel);
     api("POST", "/api/login/wait").then(advanceLogin, (err) => {
       if (app.querySelector("#login-step") === box) setupError(err);
@@ -214,7 +214,7 @@ function renderLoginStep(step) {
   // Steps that need a full browser on this server (captchas, Google sign-in) can't be done from here.
   box.replaceChildren(
     el("h2", {}, "Can't continue this login here"),
-    el("p", {}, step.instructions || `${NETWORK} asked for a verification step this app can't show.`),
+    el("p", {}, ...linkify(step.instructions || `${NETWORK} asked for a verification step this app can't show.`)),
     CONFIG.login_fallback_hint ? el("p", { class: "hint" }, CONFIG.login_fallback_hint) : null,
     actions);
   actions.append(cancel);
@@ -672,8 +672,10 @@ function renderMessage(m, showAuthor) {
         onclick: () => { location.hash = `#/c/${state.activeId}/m/${m.quote.message_id}`; },
       }, el("strong", {}, m.quote.author_name), m.quote.text || "(attachment)"));
     }
-    for (const a of m.attachments) bubble.append(renderAttachment(a));
-    if (m.body) bubble.append(el("div", { class: "text" }, ...linkify(m.body)));
+    if (m.view_once) bubble.append(renderViewOnce(m));
+    else for (const a of m.attachments) bubble.append(renderAttachment(a));
+    if (m.formatted_body) bubble.append(el("div", { class: "text" }, ...richText(m.formatted_body)));
+    else if (m.body) bubble.append(el("div", { class: "text" }, ...linkify(m.body)));
     for (const p of parsePreviews(m.link_previews)) bubble.append(renderLinkPreview(p));
     if (!m.body && !m.attachments.length) bubble.append(el("span", { class: "missing" }, "(empty message)"));
   }
@@ -768,6 +770,41 @@ function menuItems(m) {
 }
 
 const ATTACHMENT_KINDS = { "m.image": "image", "m.sticker": "sticker", "m.video": "video", "m.audio": "audio" };
+
+// View-once media is shown once, when asked for, and then removed.
+function renderViewOnce(m) {
+  const present = m.attachments.filter((a) => a.status === "present");
+  if (m.outgoing || !present.length) {
+    return el("span", { class: "missing" }, m.outgoing ? "View-once media" : "View-once media · opened");
+  }
+  return el("button", { type: "button", class: "view-once", onclick: () => openViewOnce(m, present) }, "▶ View once");
+}
+
+async function openViewOnce(m, attachments) {
+  // Load the media before telling the server it was viewed, which removes it.
+  let urls;
+  try {
+    urls = await Promise.all(attachments.map(async (a) => {
+      const res = await fetch(`/api/attachments/${a.id}`);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return URL.createObjectURL(await res.blob());
+    }));
+  } catch (err) {
+    toast(`Couldn't load the media: ${err.message}`);
+    return;
+  }
+  const media = attachments.map((a, i) => (ATTACHMENT_KINDS[a.msgtype] === "video"
+    ? el("video", { src: urls[i], controls: true, autoplay: true })
+    : el("img", { src: urls[i], alt: a.filename || "view-once media" })));
+  const overlay = el("div", { class: "modal-backdrop view-once-viewer", title: "Click to close" }, ...media);
+  overlay.addEventListener("click", (e) => {
+    if (e.target.tagName === "VIDEO") return;
+    overlay.remove();
+    urls.forEach((u) => URL.revokeObjectURL(u));
+  });
+  document.body.append(overlay);
+  api("POST", `/api/messages/${m.id}/viewed`).catch((err) => toast(err.message));
+}
 
 function renderAttachment(a) {
   if (a.status !== "present") return missingAttachmentNode(a.status === "purged", a.filename);
@@ -939,7 +976,8 @@ async function openSettings() {
   backdrop.querySelector('[data-field="remote-id"]').textContent = a.remote_id ? `ID ${a.remote_id}` : "";
   backdrop.querySelector('[data-field="state"]').textContent = a.state || "starting";
   backdrop.querySelector('[data-field="state-detail"]').textContent = [a.state_error, a.state_message].filter(Boolean).join(": ");
-  backdrop.querySelector('[data-field="logout-hint"]').textContent = `Logging out signs this server out of ${NETWORK}. `
+  backdrop.querySelector('[data-field="logout-hint"]').textContent = CONFIG.logout_hint
+    || `Logging out signs this server out of ${NETWORK}. `
     + "Your stored messages stay here; logging in again (with the same account) picks up where it left off.";
   backdrop.querySelector('[data-field="history-help"]').textContent = CONFIG.history_help;
   const sections = backdrop.querySelector("#extension-sections");

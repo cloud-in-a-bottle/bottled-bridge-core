@@ -334,6 +334,18 @@ func (s *Server) unsend(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) viewed(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err == nil {
+		err = s.svc.MarkViewed(r.Context(), id)
+	}
+	if err != nil {
+		s.Fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) retry(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {

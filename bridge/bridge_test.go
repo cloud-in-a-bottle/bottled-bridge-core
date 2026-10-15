@@ -171,6 +171,18 @@ func TestSendFromHereGetsStatus(t *testing.T) {
 	if last = msgs[len(msgs)-1]; last.Status != "read" {
 		t.Fatalf("expected read status, got %+v", last)
 	}
+
+	// An edit reaches the network as the new text, without the "* " fallback edits carry for old Matrix clients.
+	if err := h.Svc.Edit(h.Ctx, last.ID, "edited from here"); err != nil {
+		t.Fatal(err)
+	}
+	if edits := h.Net.Edits(); len(edits) != 1 || edits[0].Content.Body != "edited from here" {
+		t.Fatalf("network got edits %+v", edits)
+	}
+	msgs = h.Messages(dmKey())
+	if last = msgs[len(msgs)-1]; last.Body != "edited from here" || last.EditedAt == 0 {
+		t.Fatalf("edit not stored: %+v", last)
+	}
 }
 
 func TestFailedSendRetryAndDiscard(t *testing.T) {
@@ -239,5 +251,55 @@ func TestAccountReportsInitialSync(t *testing.T) {
 	syncing.Store(false)
 	if a := h.Svc.Account(h.Ctx); a.Syncing {
 		t.Fatalf("expected sync to be over: %+v", a)
+	}
+}
+
+func TestViewOnceMedia(t *testing.T) {
+	h := bridgetest.New(t)
+	msg := bridgetest.ImageMessage("alice", "v1", []byte("not really a png"), "", time.UnixMilli(1_700_000_000_000))
+	convert := msg.ConvertMessageFunc
+	msg.ConvertMessageFunc = func(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, data string) (*bridgev2.ConvertedMessage, error) {
+		converted, err := convert(ctx, portal, intent, data)
+		if err == nil {
+			converted.Parts[0].Content.BeeperViewLimited = &event.BeeperViewLimitedMedia{Type: "count", Count: 1}
+		}
+		return converted, err
+	}
+	h.Queue(msg)
+	m := h.Messages(dmKey())[0]
+	if !m.ViewOnce || len(m.Attachments) != 1 || m.Attachments[0].Status != "present" {
+		t.Fatalf("view-once message: %+v", m)
+	}
+
+	if err := h.Svc.MarkViewed(h.Ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if viewed := h.Net.Viewed(); len(viewed) != 1 || viewed[0] != "v1" {
+		t.Fatalf("network told of views: %v", viewed)
+	}
+	m = h.WaitFor(dmKey(), func(m store.Message) bool { return m.Attachments[0].Status == "purged" })
+	if !m.ViewOnce || m.Deleted {
+		t.Fatalf("viewed message: %+v", m)
+	}
+	if err := h.Svc.MarkViewed(h.Ctx, h.Messages(dmKey())[0].ID); err == nil {
+		t.Fatal("viewing again succeeded")
+	}
+}
+
+func TestDisappearingTimerChangeIsOneLine(t *testing.T) {
+	h := bridgetest.New(t)
+	h.Queue(bridgetest.TextMessage(dmKey(), "alice", "m1", "hi", time.UnixMilli(1_700_000_000_000)))
+	h.Queue(&simplevent.ChatInfoChange{
+		EventMeta: simplevent.EventMeta{
+			Type: bridgev2.RemoteEventChatInfoChange, PortalKey: dmKey(), Sender: bridgetest.Sender("alice"),
+			Timestamp: time.UnixMilli(1_700_000_001_000),
+		},
+		ChatInfoChange: &bridgev2.ChatInfoChange{ChatInfo: &bridgev2.ChatInfo{Disappear: &database.DisappearingSetting{
+			Type: event.DisappearingTypeAfterRead, Timer: time.Hour,
+		}}},
+	})
+	msgs := h.Messages(dmKey())
+	if len(msgs) != 2 || msgs[1].Kind != "update" || msgs[1].Body != "set messages to disappear after 1 hour" {
+		t.Fatalf("messages: %+v", msgs)
 	}
 }

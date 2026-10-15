@@ -49,8 +49,13 @@ type NewPart struct {
 	ThreadRootEvent string
 	LinkPreviews    string
 	ExpiresAt       int64
-	Status          string
-	Source          Source
+	// The message's disappearing-messages timer, whether or not it has started.
+	DisappearTimerMS int64
+	ViewOnce         bool
+	// An update that doesn't count as chat activity (see the quiet column).
+	Quiet  bool
+	Status string
+	Source Source
 	// Set for media parts; Body is then ignored in favour of Attachment.Caption.
 	Attachment *NewAttachment
 }
@@ -81,11 +86,13 @@ func (tx *Tx) PutPart(p NewPart) (int64, error) {
 		}
 		err = tx.queryRow(
 			`INSERT INTO messages (conversation_id, author_id, remote_id, sent_at, received_at, kind, msgtype, body,
-				formatted_body, reply_to_event, thread_root_event, link_previews, expires_at, status, source)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+				formatted_body, reply_to_event, thread_root_event, link_previews, expires_at, disappear_timer_ms, view_once,
+				quiet, status, source)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
 			p.ConversationID, p.AuthorID, nullString(p.RemoteID), p.SentAt, nowMS(), p.Kind, nullString(p.MsgType),
 			nullString(body), nullString(formatted), nullString(p.ReplyToEvent), nullString(p.ThreadRootEvent),
-			nullString(p.LinkPreviews), nullInt(p.ExpiresAt), nullString(p.Status), p.Source,
+			nullString(p.LinkPreviews), nullInt(p.ExpiresAt), p.DisappearTimerMS, p.ViewOnce, p.Quiet, nullString(p.Status),
+			p.Source,
 		).Scan(&messageID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to insert message: %w", err)
@@ -148,10 +155,12 @@ func (tx *Tx) PutPart(p NewPart) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if _, err = tx.exec(
-		"UPDATE conversations SET last_message_at = max(last_message_at, ?) WHERE id = ?", p.SentAt, p.ConversationID,
-	); err != nil {
-		return 0, err
+	if !p.Quiet {
+		if _, err = tx.exec(
+			"UPDATE conversations SET last_message_at = max(last_message_at, ?) WHERE id = ?", p.SentAt, p.ConversationID,
+		); err != nil {
+			return 0, err
+		}
 	}
 	tx.touch(p.ConversationID)
 	return messageID, nil
@@ -347,6 +356,18 @@ func (tx *Tx) SetStatus(eventID, status, errorText, remoteID string) error {
 		"UPDATE messages SET status = ?, error = ?, remote_id = coalesce(remote_id, ?) WHERE id = ? AND status IS NOT NULL",
 		status, nullString(errorText), nullString(remoteID), ref.MessageID,
 	)
+	tx.touch(ref.ConversationID)
+	return err
+}
+
+// SetImportedStatus sets how far a message the owner sent got, for one imported from an export (which, unlike one sent
+// from here, has no status yet).
+func (tx *Tx) SetImportedStatus(eventID, status string) error {
+	ref, err := tx.PartByEvent(eventID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.exec("UPDATE messages SET status = ? WHERE id = ?", status, ref.MessageID)
 	tx.touch(ref.ConversationID)
 	return err
 }
