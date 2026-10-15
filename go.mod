@@ -3,7 +3,7 @@ module github.com/cloud-in-a-bottle/bottled-bridge-core
 go 1.27.0
 
 require (
-	github.com/cloud-in-a-bottle/messaging-service-spec v0.0.0-20261015182926-7bb8231f8070
+	github.com/cloud-in-a-bottle/messaging-service-spec v0.1.0
 	github.com/rs/zerolog v1.35.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.mau.fi/util v0.10.2-0.20260918225449-a4c0d5b86aa8
