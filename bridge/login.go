@@ -11,6 +11,8 @@ import (
 type pendingLogin struct {
 	proc bridgev2.LoginProcess
 	step *bridgev2.LoginStep
+	// A WaitLogin call is waiting on the step.
+	waiting bool
 }
 
 var ErrNoLogin = errors.New("no login in progress")
@@ -90,19 +92,33 @@ func (s *Service) SubmitLogin(ctx context.Context, input map[string]string) (*br
 	return s.advanceLocked(ctx, step)
 }
 
-// WaitLogin waits for a display_and_wait step (eg approving the login on another device) to finish.
+// WaitLogin waits for a display_and_wait step (eg approving the login on another device, or scanning a QR code) to
+// finish. It doesn't hold the login lock while waiting, so the step can be shown (eg its QR code) and the login
+// cancelled meanwhile.
 func (s *Service) WaitLogin(ctx context.Context) (*bridgev2.LoginStep, error) {
 	s.loginMu.Lock()
-	defer s.loginMu.Unlock()
-	if s.login == nil {
+	pending := s.login
+	if pending == nil {
+		s.loginMu.Unlock()
 		return nil, ErrNoLogin
 	}
-	proc, ok := s.login.proc.(bridgev2.LoginProcessDisplayAndWait)
-	if !ok || s.login.step.Type != bridgev2.LoginStepTypeDisplayAndWait {
-		return nil, errors.New("current login step isn't a waiting step")
+	proc, ok := pending.proc.(bridgev2.LoginProcessDisplayAndWait)
+	if !ok || pending.step.Type != bridgev2.LoginStepTypeDisplayAndWait || pending.waiting {
+		s.loginMu.Unlock()
+		return nil, errors.New("current login step isn't a waiting step, or is already being waited on")
 	}
+	pending.waiting = true
+	s.loginMu.Unlock()
+
 	step, err := proc.Wait(ctx)
-	if err != nil {
+
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	pending.waiting = false
+	if s.login != pending {
+		// Cancelled (or replaced by a new login) while waiting.
+		return nil, ErrNoLogin
+	} else if err != nil {
 		return nil, err
 	}
 	return s.advanceLocked(ctx, step)

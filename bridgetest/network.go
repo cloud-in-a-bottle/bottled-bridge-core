@@ -72,9 +72,41 @@ func (n *FakeNetwork) GetCapabilities() *bridgev2.NetworkGeneralCapabilities {
 	return &bridgev2.NetworkGeneralCapabilities{}
 }
 func (n *FakeNetwork) GetConfig() (string, any, configupgrade.Upgrader) { return "", nil, nil }
-func (n *FakeNetwork) GetLoginFlows() []bridgev2.LoginFlow              { return nil }
-func (n *FakeNetwork) CreateLogin(context.Context, *bridgev2.User, string) (bridgev2.LoginProcess, error) {
-	return nil, fmt.Errorf("not supported")
+func (n *FakeNetwork) GetLoginFlows() []bridgev2.LoginFlow {
+	return []bridgev2.LoginFlow{{ID: "qr", Name: "QR"}}
+}
+
+// CreateLogin starts a QR login whose wait only ends when it's cancelled, like a QR code nobody scans.
+func (n *FakeNetwork) CreateLogin(_ context.Context, _ *bridgev2.User, flowID string) (bridgev2.LoginProcess, error) {
+	if flowID != "qr" {
+		return nil, fmt.Errorf("no such flow %q", flowID)
+	}
+	return &fakeQRLogin{cancelled: make(chan struct{})}, nil
+}
+
+type fakeQRLogin struct {
+	cancelOnce sync.Once
+	cancelled  chan struct{}
+}
+
+func (l *fakeQRLogin) Start(context.Context) (*bridgev2.LoginStep, error) {
+	return &bridgev2.LoginStep{
+		Type: bridgev2.LoginStepTypeDisplayAndWait, StepID: "qr", Instructions: "Scan the code",
+		DisplayAndWaitParams: &bridgev2.LoginDisplayAndWaitParams{Type: bridgev2.LoginDisplayTypeQR, Data: "fake-qr"},
+	}, nil
+}
+
+func (l *fakeQRLogin) Wait(ctx context.Context) (*bridgev2.LoginStep, error) {
+	select {
+	case <-l.cancelled:
+		return nil, fmt.Errorf("login cancelled")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (l *fakeQRLogin) Cancel() {
+	l.cancelOnce.Do(func() { close(l.cancelled) })
 }
 func (n *FakeNetwork) LoadUserLogin(_ context.Context, login *bridgev2.UserLogin) error {
 	login.Client = &fakeClient{n: n}
