@@ -12,6 +12,7 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
+	github.com/cloud-in-a-bottle/messaging-service-spec v0.0.0-20261015182926-7bb8231f8070 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect

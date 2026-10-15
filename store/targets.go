@@ -19,6 +19,12 @@ type ConversationTarget struct {
 var ErrReadOnly = errors.New("this chat only has imported history, and isn't connected to a chat on the network")
 
 func (s *Store) ConversationTarget(ctx context.Context, conversationID int64) (ConversationTarget, error) {
+	return s.ReadTarget(ctx, conversationID, 0)
+}
+
+// ReadTarget is ConversationTarget with, as the latest event, the newest one the network knows about at or before a
+// message (or the conversation's newest, if messageID is zero).
+func (s *Store) ReadTarget(ctx context.Context, conversationID, messageID int64) (ConversationTarget, error) {
 	var t ConversationTarget
 	err := s.db.QueryRowContext(ctx, "SELECT room_id FROM conversations WHERE id = ?", conversationID).Scan(&t.RoomID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -28,10 +34,20 @@ func (s *Store) ConversationTarget(ctx context.Context, conversationID int64) (C
 	} else if strings.HasPrefix(t.RoomID, "import:") {
 		return t, ErrReadOnly
 	}
+	upTo := Position{SentAt: 1 << 62}
+	if messageID != 0 {
+		err = s.db.QueryRowContext(ctx, "SELECT sent_at, id FROM messages WHERE id = ? AND conversation_id = ?",
+			messageID, conversationID).Scan(&upTo.SentAt, &upTo.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return t, ErrNotFound
+		} else if err != nil {
+			return t, err
+		}
+	}
 	err = s.db.QueryRowContext(ctx, `
 		SELECT p.event_id, m.sent_at FROM messages m JOIN message_parts p ON p.message_id = m.id
-		WHERE m.conversation_id = ? AND m.kind = 'message' AND m.remote_id IS NOT NULL
-		ORDER BY m.sent_at DESC, p.rowid DESC LIMIT 1`, conversationID,
+		WHERE m.conversation_id = ? AND m.kind = 'message' AND m.remote_id IS NOT NULL AND (m.sent_at, m.id) <= (?, ?)
+		ORDER BY m.sent_at DESC, m.id DESC, p.rowid DESC LIMIT 1`, conversationID, upTo.SentAt, upTo.ID,
 	).Scan(&t.LatestEventID, &t.LatestSentAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, nil

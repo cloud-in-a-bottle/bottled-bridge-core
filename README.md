@@ -28,6 +28,9 @@ module replaces the second half:
 - `web/` is the HTTP API and the UI (plain JS modules embedded in the binary, no build step), with live updates over
   SSE (`/api/events`). The app brands it (`web.Branding`), supplies its icons, and can add routes and settings
   sections (eg Messenger's importer).
+- `web/messaging*.go` provides the [messaging service](https://github.com/cloud-in-a-bottle/messaging-service-spec)
+  to other apps, under `/messaging/`, when the app sets `web.Options.Messaging`: the same store and bridge, in the
+  spec's shapes, with what each chat allows taken from the features the connector reports for it.
 - `bridgetest/` runs all of the above against a fake network connector; the core's tests use it, and apps use it to
   seed a development database.
 
@@ -36,6 +39,16 @@ module replaces the second half:
 ```go
 svc, err := bridge.New(bridge.Options{Connector: conn, DBOwner: "bottled-x", MaxFileSize: 512 << 20}, cfg.BridgeDBPath, st, fs, broker, log)
 srv, err := web.New(web.Options{Config: cfg, Service: svc, Store: st, Files: fs, Broker: broker, Branding: branding, Static: appStatic, Log: log})
+```
+
+To provide the messaging service, also set `Messaging: &web.MessagingOptions{Network: "x"}` and declare it in
+`openhost.toml`:
+
+```toml
+[[services.v2.provides]]
+service = "github.com/cloud-in-a-bottle/messaging-service-spec"
+version = "0.1.0"
+endpoint = "/messaging/"
 ```
 
 See bottled-fb-messenger's `cmd/bottled-fb-messenger/main.go` for the whole wiring.

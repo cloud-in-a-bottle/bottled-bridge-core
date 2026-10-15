@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2"
@@ -38,6 +39,8 @@ type Options struct {
 	// modules in Branding.Extensions.
 	Static fs.FS
 	Log    zerolog.Logger
+	// Set to provide the messaging service to other apps, under MessagingPrefix.
+	Messaging *MessagingOptions
 }
 
 type Server struct {
@@ -47,9 +50,13 @@ type Server struct {
 	files    *files.Store
 	broker   *events.Broker
 	branding Branding
-	index    []byte
-	log      zerolog.Logger
-	mux      *http.ServeMux
+	// Nil when the app doesn't provide the messaging service.
+	messaging *MessagingOptions
+	// Serializes sends through the messaging service, for their client IDs.
+	sendMu sync.Mutex
+	index  []byte
+	log    zerolog.Logger
+	mux    *http.ServeMux
 }
 
 func New(opts Options) (*Server, error) {
@@ -66,13 +73,18 @@ func New(opts Options) (*Server, error) {
 			return nil, fmt.Errorf("extension module: %w", err)
 		}
 	}
+	if opts.Messaging != nil {
+		if err := opts.Messaging.validate(); err != nil {
+			return nil, err
+		}
+	}
 	index, err := renderIndex(opts.Branding)
 	if err != nil {
 		return nil, err
 	}
 	s := &Server{
 		cfg: opts.Config, svc: opts.Service, store: opts.Store, files: opts.Files, broker: opts.Broker,
-		branding: opts.Branding, index: index, log: opts.Log, mux: http.NewServeMux(),
+		branding: opts.Branding, messaging: opts.Messaging, index: index, log: opts.Log, mux: http.NewServeMux(),
 	}
 	mux := s.mux
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +125,9 @@ func New(opts Options) (*Server, error) {
 	mux.HandleFunc("GET /api/contacts", s.contacts)
 	mux.HandleFunc("GET /api/people/search", s.searchPeople)
 	mux.HandleFunc("GET /api/storage", s.storage)
+	if s.messaging != nil {
+		s.messagingRoutes()
+	}
 	return s, nil
 }
 

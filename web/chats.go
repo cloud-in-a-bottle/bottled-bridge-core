@@ -421,7 +421,7 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
-	hits, err := s.store.Search(r.Context(), r.URL.Query().Get("q"), 100)
+	hits, err := s.store.Search(r.Context(), r.URL.Query().Get("q"), 0, 100)
 	if err != nil {
 		s.Fail(w, r, err)
 		return

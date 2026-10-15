@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -36,9 +37,13 @@ type ConversationSummary struct {
 	Topic         string `json:"topic,omitempty"`
 	// Only has history imported from an export, with no chat on the network behind it to send to.
 	ReadOnly bool `json:"read_only"`
+	// The other person in a DM.
+	OtherRemoteID string `json:"-"`
+	OtherName     string `json:"-"`
 }
 
 const summaryColumns = `c.id, c.kind, ` + conversationNameSQL + `, coalesce(c.avatar_sha256, op.avatar_sha256, ''),
+	coalesce(op.remote_id, ''), coalesce(op.name, ''),
 	coalesce(c.other_person_id, 0), c.last_message_at, c.marked_unread, c.pinned, c.archived, c.muted_until,
 	coalesce(c.disappear_type, ''), c.disappear_timer_ms, coalesce(c.topic, ''), c.room_id LIKE 'import:%',
 	(SELECT count(*) FROM messages m JOIN people a ON a.id = m.author_id
@@ -60,7 +65,7 @@ const summaryFrom = ` FROM conversations c LEFT JOIN people op ON op.id = c.othe
 
 func scanSummary(row interface{ Scan(...any) error }) (ConversationSummary, error) {
 	var s ConversationSummary
-	err := row.Scan(&s.ID, &s.Kind, &s.Name, &s.AvatarSHA256, &s.OtherPersonID, &s.LastMessageAt, &s.MarkedUnread,
+	err := row.Scan(&s.ID, &s.Kind, &s.Name, &s.AvatarSHA256, &s.OtherRemoteID, &s.OtherName, &s.OtherPersonID, &s.LastMessageAt, &s.MarkedUnread,
 		&s.Pinned, &s.Archived, &s.MutedUntil, &s.DisappearType, &s.DisappearMS, &s.Topic, &s.ReadOnly, &s.UnreadCount, &s.Preview)
 	return s, err
 }
@@ -148,30 +153,35 @@ type Attachment struct {
 }
 
 type Reaction struct {
-	Emoji       string `json:"emoji"`
-	ReactorID   int64  `json:"reactor_id"`
-	ReactorName string `json:"reactor_name"`
-	Mine        bool   `json:"mine"`
+	Emoji         string `json:"emoji"`
+	ReactorID     int64  `json:"reactor_id"`
+	ReactorName   string `json:"reactor_name"`
+	Mine          bool   `json:"mine"`
+	ReactorRemote string `json:"-"`
+	ReactorAvatar string `json:"-"`
 }
 
 type Message struct {
-	ID           int64           `json:"id"`
-	AuthorID     int64           `json:"author_id"`
-	AuthorName   string          `json:"author_name"`
-	Outgoing     bool            `json:"outgoing"`
-	SentAt       int64           `json:"sent_at"`
-	Kind         string          `json:"kind"`
-	MsgType      string          `json:"msgtype"`
-	Body         string          `json:"body"`
-	EditedAt     int64           `json:"edited_at,omitempty"`
-	Deleted      bool            `json:"deleted"`
-	ExpiresAt    int64           `json:"expires_at,omitempty"`
-	Status       string          `json:"status,omitempty"`
-	Error        string          `json:"error,omitempty"`
-	Quote        *Quote          `json:"quote"`
-	LinkPreviews json.RawMessage `json:"link_previews,omitempty"`
-	Attachments  []Attachment    `json:"attachments"`
-	Reactions    []Reaction      `json:"reactions"`
+	ID             int64           `json:"id"`
+	ConversationID int64           `json:"-"`
+	AuthorID       int64           `json:"author_id"`
+	AuthorRemote   string          `json:"-"`
+	AuthorAvatar   string          `json:"-"`
+	AuthorName     string          `json:"author_name"`
+	Outgoing       bool            `json:"outgoing"`
+	SentAt         int64           `json:"sent_at"`
+	Kind           string          `json:"kind"`
+	MsgType        string          `json:"msgtype"`
+	Body           string          `json:"body"`
+	EditedAt       int64           `json:"edited_at,omitempty"`
+	Deleted        bool            `json:"deleted"`
+	ExpiresAt      int64           `json:"expires_at,omitempty"`
+	Status         string          `json:"status,omitempty"`
+	Error          string          `json:"error,omitempty"`
+	Quote          *Quote          `json:"quote"`
+	LinkPreviews   json.RawMessage `json:"link_previews,omitempty"`
+	Attachments    []Attachment    `json:"attachments"`
+	Reactions      []Reaction      `json:"reactions"`
 }
 
 type MessagePage struct {
@@ -184,36 +194,52 @@ func (s *Store) MessagesPage(ctx context.Context, conversationID, before int64, 
 	if before == 0 {
 		before = 1 << 62
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id, m.author_id, coalesce(a.name, ''), a.is_self, m.sent_at, m.kind, coalesce(m.msgtype, ''),
-			coalesce(m.body, ''), coalesce(m.edited_at, 0), m.deleted_at IS NOT NULL, coalesce(m.expires_at, 0),
-			coalesce(m.status, ''), coalesce(m.error, ''), coalesce(m.link_previews, ''),
-			coalesce(q.id, 0), coalesce(qa.name, ''), coalesce(q.body, ''),
-			(SELECT max(rr.read_up_to) FROM read_receipts rr WHERE rr.conversation_id = m.conversation_id
-				AND rr.person_id != m.author_id)
-		FROM messages m
-		JOIN people a ON a.id = m.author_id
-		LEFT JOIN message_parts qp ON qp.event_id = m.reply_to_event
-		LEFT JOIN messages q ON q.id = qp.message_id
-		LEFT JOIN people qa ON qa.id = q.author_id
-		WHERE m.conversation_id = ? AND m.sent_at < ?
-		ORDER BY m.sent_at DESC, m.id DESC LIMIT ?`, conversationID, before, limit+1)
+	msgs, err := s.loadMessages(ctx, "m.conversation_id = ? AND m.sent_at < ?", []any{conversationID, before},
+		"m.sent_at DESC, m.id DESC", limit+1)
 	if err != nil {
 		return MessagePage{}, err
 	}
-	var msgs []Message
-	byID := make(map[int64]*Message)
+	page := MessagePage{HasMore: len(msgs) > limit, Messages: msgs}
+	if page.HasMore {
+		page.Messages = msgs[:limit]
+	}
+	slices.Reverse(page.Messages)
+	return page, nil
+}
+
+const messageColumns = `m.id, m.conversation_id, m.author_id, a.remote_id, coalesce(a.name, ''),
+	coalesce(a.avatar_sha256, ''), a.is_self, m.sent_at, m.kind, coalesce(m.msgtype, ''), coalesce(m.body, ''),
+	coalesce(m.edited_at, 0), m.deleted_at IS NOT NULL, coalesce(m.expires_at, 0), coalesce(m.status, ''),
+	coalesce(m.error, ''), coalesce(m.link_previews, ''), coalesce(q.id, 0), coalesce(qa.name, ''), coalesce(q.body, ''),
+	(SELECT max(rr.read_up_to) FROM read_receipts rr WHERE rr.conversation_id = m.conversation_id
+		AND rr.person_id != m.author_id)`
+
+const messageFrom = ` FROM messages m
+	JOIN people a ON a.id = m.author_id
+	LEFT JOIN message_parts qp ON qp.event_id = m.reply_to_event
+	LEFT JOIN messages q ON q.id = qp.message_id
+	LEFT JOIN people qa ON qa.id = q.author_id`
+
+// loadMessages returns the messages matching where (over messages m), in order, with their attachments and
+// reactions.
+func (s *Store) loadMessages(ctx context.Context, where string, args []any, order string, limit int) ([]Message, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+messageColumns+messageFrom+" WHERE "+where+" ORDER BY "+order+
+		" LIMIT ?", append(args, limit)...)
+	if err != nil {
+		return nil, err
+	}
+	msgs := []Message{}
 	for rows.Next() {
 		var m Message
 		var linkPreviews string
 		var quoteID int64
 		var quoteAuthor, quoteText string
 		var readUpTo sql.NullInt64
-		if err = rows.Scan(&m.ID, &m.AuthorID, &m.AuthorName, &m.Outgoing, &m.SentAt, &m.Kind, &m.MsgType, &m.Body,
-			&m.EditedAt, &m.Deleted, &m.ExpiresAt, &m.Status, &m.Error, &linkPreviews, &quoteID, &quoteAuthor,
-			&quoteText, &readUpTo); err != nil {
+		if err = rows.Scan(&m.ID, &m.ConversationID, &m.AuthorID, &m.AuthorRemote, &m.AuthorName, &m.AuthorAvatar,
+			&m.Outgoing, &m.SentAt, &m.Kind, &m.MsgType, &m.Body, &m.EditedAt, &m.Deleted, &m.ExpiresAt, &m.Status,
+			&m.Error, &linkPreviews, &quoteID, &quoteAuthor, &quoteText, &readUpTo); err != nil {
 			_ = rows.Close()
-			return MessagePage{}, err
+			return nil, err
 		}
 		if linkPreviews != "" {
 			m.LinkPreviews = json.RawMessage(linkPreviews)
@@ -229,28 +255,22 @@ func (s *Store) MessagesPage(ctx context.Context, conversationID, before int64, 
 		msgs = append(msgs, m)
 	}
 	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
-		return MessagePage{}, err
+		return nil, err
 	}
-	page := MessagePage{HasMore: len(msgs) > limit, Messages: []Message{}}
-	if page.HasMore {
-		msgs = msgs[:limit]
+	if len(msgs) == 0 {
+		return msgs, nil
 	}
-	for i := len(msgs) - 1; i >= 0; i-- {
-		page.Messages = append(page.Messages, msgs[i])
-	}
-	if len(page.Messages) == 0 {
-		return page, nil
-	}
-	ids := make([]string, len(page.Messages))
-	for i := range page.Messages {
-		byID[page.Messages[i].ID] = &page.Messages[i]
-		ids[i] = fmt.Sprint(page.Messages[i].ID)
+	byID := make(map[int64]*Message, len(msgs))
+	ids := make([]string, len(msgs))
+	for i := range msgs {
+		byID[msgs[i].ID] = &msgs[i]
+		ids[i] = fmt.Sprint(msgs[i].ID)
 	}
 	inList := strings.Join(ids, ",")
 	if err = s.fillAttachments(ctx, inList, byID); err != nil {
-		return page, err
+		return nil, err
 	}
-	return page, s.fillReactions(ctx, inList, byID)
+	return msgs, s.fillReactions(ctx, inList, byID)
 }
 
 func (s *Store) fillAttachments(ctx context.Context, inList string, byID map[int64]*Message) error {
@@ -277,7 +297,8 @@ func (s *Store) fillAttachments(ctx context.Context, inList string, byID map[int
 
 func (s *Store) fillReactions(ctx context.Context, inList string, byID map[int64]*Message) error {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.message_id, r.emoji, r.reactor_id, coalesce(p.name, ''), p.is_self
+		SELECT r.message_id, r.emoji, r.reactor_id, coalesce(p.name, ''), p.is_self, p.remote_id,
+			coalesce(p.avatar_sha256, '')
 		FROM reactions r JOIN people p ON p.id = r.reactor_id
 		WHERE r.message_id IN (`+inList+`) ORDER BY r.sent_at`)
 	if err != nil {
@@ -287,7 +308,7 @@ func (s *Store) fillReactions(ctx context.Context, inList string, byID map[int64
 	for rows.Next() {
 		var messageID int64
 		var r Reaction
-		if err = rows.Scan(&messageID, &r.Emoji, &r.ReactorID, &r.ReactorName, &r.Mine); err != nil {
+		if err = rows.Scan(&messageID, &r.Emoji, &r.ReactorID, &r.ReactorName, &r.Mine, &r.ReactorRemote, &r.ReactorAvatar); err != nil {
 			return err
 		}
 		byID[messageID].Reactions = append(byID[messageID].Reactions, r)
@@ -337,8 +358,9 @@ type SearchHit struct {
 	Snippet          string `json:"snippet"`
 }
 
-// Search does a full-text search of message bodies. Each word of the query matches as a prefix.
-func (s *Store) Search(ctx context.Context, query string, limit int) ([]SearchHit, error) {
+// Search does a full-text search of message bodies, in one conversation or (if conversationID is zero) all of them.
+// Each word of the query matches as a prefix.
+func (s *Store) Search(ctx context.Context, query string, conversationID int64, limit int) ([]SearchHit, error) {
 	var terms []string
 	for word := range strings.FieldsSeq(query) {
 		terms = append(terms, `"`+strings.ReplaceAll(word, `"`, `""`)+`"*`)
@@ -355,8 +377,8 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]SearchHi
 		JOIN people a ON a.id = m.author_id
 		JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN people op ON op.id = c.other_person_id
-		WHERE messages_fts MATCH ? AND m.kind = 'message'
-		ORDER BY m.sent_at DESC LIMIT ?`, strings.Join(terms, " "), limit)
+		WHERE messages_fts MATCH ? AND m.kind = 'message' AND (? = 0 OR m.conversation_id = ?)
+		ORDER BY m.sent_at DESC LIMIT ?`, strings.Join(terms, " "), conversationID, conversationID, limit)
 	if err != nil {
 		return nil, err
 	}

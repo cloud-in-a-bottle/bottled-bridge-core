@@ -72,24 +72,33 @@ func mediaMsgType(contentType string) event.MessageType {
 	}
 }
 
-// Send sends a text and/or files. Each file is its own message on the network; the text goes along as the last file's
-// caption. It returns once the messages are stored locally; sending continues in the background.
+// Send sends a text and/or files, and returns the last message's ID. See SendAll.
 func (s *Service) Send(ctx context.Context, conversationID int64, body string, replyToMessageID int64, files []OutgoingFile) (int64, error) {
+	ids, err := s.SendAll(ctx, conversationID, body, replyToMessageID, files)
+	if err != nil {
+		return 0, err
+	}
+	return ids[len(ids)-1], nil
+}
+
+// SendAll sends a text and/or files. Each file is its own message on the network; the text goes along as the last
+// file's caption. It returns the messages' IDs once they're stored locally; sending continues in the background.
+func (s *Service) SendAll(ctx context.Context, conversationID int64, body string, replyToMessageID int64, files []OutgoingFile) ([]int64, error) {
 	var replyTo id.EventID
 	if replyToMessageID != 0 {
 		ref, err := s.store.FirstPart(ctx, replyToMessageID)
 		if err != nil {
-			return 0, fmt.Errorf("reply target: %w", err)
+			return nil, fmt.Errorf("reply target: %w", err)
 		}
 		replyTo = id.EventID(ref)
 	}
 	return s.send(ctx, conversationID, body, replyTo, files)
 }
 
-func (s *Service) send(ctx context.Context, conversationID int64, body string, replyTo id.EventID, files []OutgoingFile) (int64, error) {
+func (s *Service) send(ctx context.Context, conversationID int64, body string, replyTo id.EventID, files []OutgoingFile) ([]int64, error) {
 	target, err := s.store.ConversationTarget(ctx, conversationID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	var contents []*event.MessageEventContent
 	for i, f := range files {
@@ -112,13 +121,13 @@ func (s *Service) send(ctx context.Context, conversationID int64, body string, r
 	}
 	if len(files) == 0 {
 		if body == "" {
-			return 0, errors.New("nothing to send")
+			return nil, errors.New("nothing to send")
 		}
 		contents = append(contents, &event.MessageEventContent{MsgType: event.MsgText, Body: body})
 	}
 
 	var evts []*event.Event
-	var lastMessageID int64
+	var messageIDs []int64
 	_, err = s.store.Tx(ctx, func(tx *store.Tx) error {
 		selfID, err := tx.SelfPerson()
 		if err != nil {
@@ -155,15 +164,17 @@ func (s *Service) send(ctx context.Context, conversationID int64, body string, r
 					part.Attachment.Caption = content.Body
 				}
 			}
-			if lastMessageID, err = tx.PutPart(part); err != nil {
+			messageID, err := tx.PutPart(part)
+			if err != nil {
 				return err
 			}
+			messageIDs = append(messageIDs, messageID)
 			evts = append(evts, evt)
 		}
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	s.broker.Publish("conversation", events.ConversationChanged{ConversationID: conversationID})
 	go func() {
@@ -176,7 +187,7 @@ func (s *Service) send(ctx context.Context, conversationID int64, body string, r
 			}
 		}
 	}()
-	return lastMessageID, nil
+	return messageIDs, nil
 }
 
 // React sets the owner's reaction to a message, replacing any previous one (the networks allow one per person), or
@@ -219,6 +230,28 @@ func (s *Service) React(ctx context.Context, messageID int64, emoji string) erro
 	})
 }
 
+// Unreact removes the owner's reaction with this emoji, if there is one.
+func (s *Service) Unreact(ctx context.Context, messageID int64, emoji string) error {
+	target, err := s.store.MessageTarget(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	for _, existing := range target.OwnReactions {
+		if existing.Emoji != emoji {
+			continue
+		}
+		redaction := s.newEvent(id.RoomID(target.RoomID), event.EventRedaction, &event.RedactionEventContent{Redacts: id.EventID(existing.EventID)})
+		redaction.Redacts = id.EventID(existing.EventID)
+		if err = s.queue(redaction); err != nil {
+			return err
+		}
+		return s.applyLocally(ctx, func(tx *store.Tx) error {
+			return tx.Redact(existing.EventID, redaction.Timestamp, store.RedactUnsend)
+		})
+	}
+	return nil
+}
+
 // Retry sends a failed message again, replacing it.
 func (s *Service) Retry(ctx context.Context, messageID int64) (int64, error) {
 	unsent, err := s.store.UnsentMessage(ctx, messageID)
@@ -233,11 +266,11 @@ func (s *Service) Retry(ctx context.Context, messageID int64) (int64, error) {
 		}
 	}
 	// Send first, so the files the failed copy shares with the new one are still referenced when it's deleted.
-	newID, err := s.send(ctx, unsent.ConversationID, unsent.Body, id.EventID(unsent.ReplyToEvent), files)
+	newIDs, err := s.send(ctx, unsent.ConversationID, unsent.Body, id.EventID(unsent.ReplyToEvent), files)
 	if err != nil {
 		return 0, err
 	}
-	return newID, s.Discard(ctx, messageID)
+	return newIDs[len(newIDs)-1], s.Discard(ctx, messageID)
 }
 
 // Discard deletes a message that failed to send.
@@ -287,7 +320,13 @@ func (s *Service) Edit(ctx context.Context, messageID int64, body string) error 
 
 // MarkRead tells the network the owner has read the conversation up to its latest message.
 func (s *Service) MarkRead(ctx context.Context, conversationID int64) error {
-	target, err := s.store.ConversationTarget(ctx, conversationID)
+	return s.MarkReadUpTo(ctx, conversationID, 0)
+}
+
+// MarkReadUpTo tells the network the owner has read the conversation up to a message, or its latest if messageID is
+// zero.
+func (s *Service) MarkReadUpTo(ctx context.Context, conversationID, messageID int64) error {
+	target, err := s.store.ReadTarget(ctx, conversationID, messageID)
 	if errors.Is(err, store.ErrReadOnly) {
 		// Nothing to tell the network; just stop counting the imported messages as unread.
 		return s.applyLocally(ctx, func(tx *store.Tx) error {

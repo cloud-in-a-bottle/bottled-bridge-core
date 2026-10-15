@@ -169,3 +169,11 @@ CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Sends through the messaging service that named a client ID, so a retried request returns the same messages
+-- instead of sending again.
+CREATE TABLE IF NOT EXISTS service_sends (
+    client_id TEXT PRIMARY KEY,
+    message_ids TEXT NOT NULL,             -- JSON array of message IDs
+    created_at INTEGER NOT NULL
+);
