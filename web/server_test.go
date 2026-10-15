@@ -134,3 +134,22 @@ func TestMessagesPageThroughTies(t *testing.T) {
 		t.Fatalf("paged out %q", got)
 	}
 }
+
+func TestConversationCarriesCapabilities(t *testing.T) {
+	ts, h := newServer(t)
+	h.Queue(bridgetest.TextMessage(bridgetest.DMKey(), "alice", "m1", "hi", time.UnixMilli(1_700_000_000_000)))
+	status, body := get(t, ts.URL+"/api/conversations/"+strconv.FormatInt(h.ConversationID(bridgetest.DMKey()), 10))
+	var detail struct {
+		Capabilities *struct {
+			Reply     bool            `json:"reply"`
+			Reactions json.RawMessage `json:"reactions"`
+		} `json:"capabilities"`
+	}
+	if status != http.StatusOK || json.Unmarshal([]byte(body), &detail) != nil || detail.Capabilities == nil {
+		t.Fatalf("unexpected conversation (%d): %s", status, body)
+	}
+	// The fake network allows replies but not reactions.
+	if !detail.Capabilities.Reply || detail.Capabilities.Reactions != nil {
+		t.Fatalf("unexpected capabilities: %s", body)
+	}
+}

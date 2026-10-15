@@ -16,6 +16,8 @@ import (
 
 	_ "golang.org/x/image/webp"
 
+	"github.com/cloud-in-a-bottle/messaging-service-spec/messaging"
+
 	"github.com/cloud-in-a-bottle/bottled-bridge-core/bridge"
 	"github.com/cloud-in-a-bottle/bottled-bridge-core/files"
 	"github.com/cloud-in-a-bottle/bottled-bridge-core/store"
@@ -116,7 +118,22 @@ func (s *Server) conversation(w http.ResponseWriter, r *http.Request) {
 		s.Fail(w, r, err)
 		return
 	}
-	WriteJSON(w, detail)
+	caps, ok, err := s.svc.Capabilities(r.Context(), id)
+	if err != nil {
+		s.Fail(w, r, err)
+		return
+	}
+	out := conversationResponse{ConversationDetail: detail}
+	if ok {
+		out.Capabilities = &caps
+	}
+	WriteJSON(w, out)
+}
+
+type conversationResponse struct {
+	store.ConversationDetail
+	// What the network allows in this chat; nil until the connector has said (and for imported history).
+	Capabilities *messaging.Capabilities `json:"capabilities"`
 }
 
 func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
