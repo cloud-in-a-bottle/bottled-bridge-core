@@ -138,7 +138,11 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-keepalive.C:
 			_, _ = fmt.Fprint(w, ": keepalive\n\n")
-		case evt := <-ch:
+		case evt, open := <-ch:
+			// Dropped for falling behind: end the stream, so the client reconnects and resyncs on "hello".
+			if !open {
+				return
+			}
 			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Kind, evt.Data)
 		}
 		flusher.Flush()

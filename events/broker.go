@@ -21,7 +21,8 @@ func NewBroker() *Broker {
 	return &Broker{subscribers: make(map[chan Event]struct{})}
 }
 
-// Publish never blocks: a subscriber that has fallen far behind misses events, and resyncs when it reconnects.
+// Publish never blocks: a subscriber that has fallen far behind is dropped, its channel closed, so that it reconnects
+// and resyncs rather than carrying on without the events it missed.
 func (b *Broker) Publish(kind string, payload any) {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -33,10 +34,13 @@ func (b *Broker) Publish(kind string, payload any) {
 		select {
 		case ch <- Event{Kind: kind, Data: data}:
 		default:
+			delete(b.subscribers, ch)
+			close(ch)
 		}
 	}
 }
 
+// Subscribe returns a channel of events, closed if the subscriber falls behind, and a function to unsubscribe.
 func (b *Broker) Subscribe() (<-chan Event, func()) {
 	ch := make(chan Event, 256)
 	b.mu.Lock()
@@ -44,8 +48,11 @@ func (b *Broker) Subscribe() (<-chan Event, func()) {
 	b.mu.Unlock()
 	return ch, func() {
 		b.mu.Lock()
-		delete(b.subscribers, ch)
-		b.mu.Unlock()
+		defer b.mu.Unlock()
+		if _, ok := b.subscribers[ch]; ok {
+			delete(b.subscribers, ch)
+			close(ch)
+		}
 	}
 }
 

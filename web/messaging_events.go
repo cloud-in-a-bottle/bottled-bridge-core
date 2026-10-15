@@ -40,7 +40,11 @@ func (s *Server) svcEvents(w http.ResponseWriter, r *http.Request) {
 			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
 				return
 			}
-		case evt := <-ch:
+		case evt, open := <-ch:
+			// Dropped for falling behind: end the stream, so the client reconnects and resyncs on "hello".
+			if !open {
+				return
+			}
 			name, data, ok := svcEvent(evt)
 			if !ok {
 				continue
