@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{{.Title}}</title>
+  <link rel="icon" href="/static/app/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/app/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>:root { --accent: {{.Accent}}; }</style>
+  <script id="app-config" type="application/json">{{.Config}}</script>
+</head>
+<body>
+  <div id="app" class="loading">Loading…</div>
+
+  <template id="tpl-setup">
+    <main class="setup">
+      <h1 data-field="title"></h1>
+      <section id="login-choose">
+        <h2 data-field="login-heading"></h2>
+        <p class="hint" data-field="login-intro"></p>
+        <div class="flows" id="login-flows"></div>
+      </section>
+      <section id="login-step" hidden></section>
+      <p class="error" id="setup-error" hidden></p>
+    </main>
+  </template>
+
+  <template id="tpl-main">
+    <div class="shell">
+      <aside class="sidebar">
+        <header class="bar">
+          <strong class="title">Chats</strong>
+          <button class="icon" data-action="new-chat" title="New chat" aria-label="New chat">✎</button>
+          <button class="icon" data-action="storage" title="Storage" aria-label="Storage">▤</button>
+          <button class="icon" data-action="settings" title="Settings" aria-label="Settings">⚙</button>
+        </header>
+        <div class="connection" id="connection" hidden></div>
+        <div class="search"><input type="search" id="search" placeholder="Search messages"></div>
+        <ul class="conversations" id="conversations"></ul>
+        <ul class="search-results" id="search-results" hidden></ul>
+      </aside>
+      <section class="thread" id="thread">
+        <div class="empty">Select a conversation</div>
+      </section>
+    </div>
+  </template>
+
+  <template id="tpl-thread">
+    <header class="bar">
+      <button class="icon back" data-action="back" aria-label="Back">‹</button>
+      <span class="thread-avatar" data-field="avatar"></span>
+      <div class="thread-title">
+        <strong data-field="name"></strong>
+        <small data-field="subtitle"></small>
+      </div>
+    </header>
+    <div class="messages" id="messages">
+      <button class="load-more" data-action="load-more" hidden>Load earlier messages</button>
+      <button class="load-more" data-action="load-older" hidden></button>
+      <ol id="message-list"></ol>
+    </div>
+    <div class="typing" id="typing" hidden></div>
+    <form class="composer" id="composer">
+      <div class="reply-bar" id="reply-bar" hidden>
+        <div><small data-field="reply-label">Replying to <span data-field="reply-author"></span></small>
+          <div data-field="reply-text"></div></div>
+        <button type="button" class="icon" data-action="cancel-reply" aria-label="Cancel">✕</button>
+      </div>
+      <div class="pending-files" id="pending-files" hidden></div>
+      <div class="row">
+        <label class="icon attach" title="Attach files" aria-label="Attach files">📎
+          <input type="file" id="file-input" multiple hidden></label>
+        <textarea id="composer-input" rows="1" placeholder="Message"></textarea>
+        <button type="submit" class="send" aria-label="Send">➤</button>
+      </div>
+    </form>
+  </template>
+
+  <template id="tpl-settings">
+    <div class="modal-backdrop">
+      <div class="modal settings">
+        <header class="bar"><strong class="title">Settings</strong>
+          <button class="icon" data-action="close" aria-label="Close">✕</button></header>
+        <div class="modal-body">
+          <section>
+            <h3>Account</h3>
+            <p>Logged in as <strong data-field="name"></strong> <small class="hint" data-field="remote-id"></small></p>
+            <p>Connection: <strong data-field="state"></strong> <span class="hint" data-field="state-detail"></span></p>
+            <div class="link-options">
+              <button type="button" data-action="reconnect">Reconnect</button>
+              <button type="button" class="danger" data-action="logout">Log out</button>
+            </div>
+            <p class="hint" data-field="logout-hint"></p>
+          </section>
+          <div id="extension-sections"></div>
+          <section>
+            <h3>History</h3>
+            <p class="hint" data-field="history-help"></p>
+          </section>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-storage">
+    <div class="modal-backdrop">
+      <div class="modal storage">
+        <header class="bar"><strong class="title">Storage</strong>
+          <button class="icon" data-action="close" aria-label="Close">✕</button></header>
+        <div class="modal-body" id="storage-body"><p class="hint">Measuring…</p></div>
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-new-chat">
+    <div class="modal-backdrop">
+      <div class="modal">
+        <header class="bar"><strong class="title">New chat</strong>
+          <button class="icon" data-action="close" aria-label="Close">✕</button></header>
+        <div class="modal-body">
+          <form id="people-search" class="inline">
+            <input type="search" id="contact-filter" placeholder="Name" autocomplete="off">
+            <button type="submit" data-field="search-network"></button>
+          </form>
+          <form id="identifier-form" class="inline" hidden>
+            <input id="identifier-input" autocomplete="off">
+            <button type="submit">Start chat</button>
+          </form>
+          <p class="hint" id="contacts-label"></p>
+          <ul class="contacts" id="contacts"></ul>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script src="/static/app.js" type="module"></script>
+</body>
+</html>

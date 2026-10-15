@@ -1,0 +1,7 @@
+- prefer to write code that fails loudly, vs continuing in a best-effort manner. eg if you expect an env var to be set, fail if it doesn't exist instead of silently just falling back to a default value. the latter is harder to debug and causes unpleasant surprises.
+- don't return maps where a struct would do (eg JSON responses get a named struct type), unless a map is clearly better.
+- don't write file-level comments unless the file is particularly confusing or the intent is especially obscure. these just get out of date and confusing. a package comment explaining what a package is for is fine.
+- prefer many small code files, well organized in packages, than fewer long files.
+- comments should line-wrap at 119 chars.
+- don't use `any` or similar lazy typing unless there's truly no better way (eg where a library's interface demands it).
+- keep everything that knows about Matrix/bridgev2 event shapes in `localmx` (incoming) and `bridge` (outgoing); the store and web packages deal in plain rows.
