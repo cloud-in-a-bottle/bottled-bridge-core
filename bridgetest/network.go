@@ -19,6 +19,8 @@ import (
 type FakeNetwork struct {
 	mu       sync.Mutex
 	sent     []*bridgev2.MatrixMessage
+	edits    []*bridgev2.MatrixEdit
+	viewed   []networkid.MessageID
 	failSend bool
 	// Forward history (what a chat brings when it first appears), and older history for backwards backfill, per
 	// portal ID. Backwards pages are served newest first, one page per FetchMessages call.
@@ -61,6 +63,20 @@ func (n *FakeNetwork) Sent() []*bridgev2.MatrixMessage {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return append([]*bridgev2.MatrixMessage(nil), n.sent...)
+}
+
+// Edits is what's been handed to the network to edit.
+func (n *FakeNetwork) Edits() []*bridgev2.MatrixEdit {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]*bridgev2.MatrixEdit(nil), n.edits...)
+}
+
+// Viewed lists the view-once messages the owner opened.
+func (n *FakeNetwork) Viewed() []networkid.MessageID {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]networkid.MessageID(nil), n.viewed...)
 }
 
 func (n *FakeNetwork) Init(*bridgev2.Bridge)            {}
@@ -211,6 +227,23 @@ func (c *fakeClient) HandleMatrixMessage(_ context.Context, msg *bridgev2.Matrix
 	return &bridgev2.MatrixMessageResponse{DB: &database.Message{
 		ID: networkid.MessageID(fmt.Sprintf("sent-%d", len(c.n.sent))), SenderID: "me", Timestamp: time.Now(),
 	}}, nil
+}
+
+func (c *fakeClient) HandleMatrixEdit(_ context.Context, msg *bridgev2.MatrixEdit) error {
+	c.n.mu.Lock()
+	defer c.n.mu.Unlock()
+	if c.n.failSend {
+		return fmt.Errorf("the network said no")
+	}
+	c.n.edits = append(c.n.edits, msg)
+	return nil
+}
+
+func (c *fakeClient) HandleMatrixViewLimitedMedia(_ context.Context, msg *bridgev2.MatrixViewLimitedMedia) error {
+	c.n.mu.Lock()
+	defer c.n.mu.Unlock()
+	c.n.viewed = append(c.n.viewed, msg.Message.ID)
+	return nil
 }
 
 func (c *fakeClient) HandleMatrixMessageRemove(context.Context, *bridgev2.MatrixMessageRemove) error {

@@ -254,9 +254,11 @@ func TestMessagingSendIsIdempotent(t *testing.T) {
 	if err = p.Edit(ctx, replyTo, "not mine"); errCode(err) != messaging.ErrNotSupported {
 		t.Fatalf("expected editing someone else's message to be refused, got %v", err)
 	}
-	// The fake network reports edits as supported but can't do them: the bridge's refusal is the network's.
-	if err = p.Edit(ctx, sent.Messages[0].ID, "hello again"); errCode(err) != messaging.ErrRejected {
-		t.Fatalf("expected the network's refusal, got %v", err)
+	if err = p.Edit(ctx, sent.Messages[0].ID, "hello again"); err != nil {
+		t.Fatal(err)
+	}
+	if edits := h.Net.Edits(); len(edits) != 1 || edits[0].Content.Body != "hello again" {
+		t.Fatalf("network got edits %+v", edits)
 	}
 	if err = p.MarkRead(ctx, chatID, replyTo); err != nil {
 		t.Fatal(err)

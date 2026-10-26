@@ -12,9 +12,36 @@ const schemaVersionKey = "schema_version"
 // migrations bring a database written by an earlier version up to schema.sql, in order; a database at version n
 // has had the first n applied. Append only. schema.sql always describes the latest version, so a new database starts
 // there and skips them all.
-var migrations = []string{
+var migrations = []func(tx *sql.Tx) error{
 	// 1: people.fbid was the Messenger user ID, from before the store served other networks.
-	"ALTER TABLE people RENAME COLUMN fbid TO remote_id",
+	execMigration("ALTER TABLE people RENAME COLUMN fbid TO remote_id"),
+	// 2: view-once media.
+	addColumn("messages", "view_once", "INTEGER NOT NULL DEFAULT 0"),
+	// 3: updates that don't count as activity in the chat list.
+	addColumn("messages", "quiet", "INTEGER NOT NULL DEFAULT 0"),
+	// 4: each message's own disappearing-messages timer.
+	addColumn("messages", "disappear_timer_ms", "INTEGER NOT NULL DEFAULT 0"),
+}
+
+func execMigration(query string) func(tx *sql.Tx) error {
+	return func(tx *sql.Tx) error {
+		_, err := tx.Exec(query)
+		return err
+	}
+}
+
+// addColumn adds a column to a table that doesn't have it yet. (A table that was missing altogether has just been
+// created by schema.sql, with the column.)
+func addColumn(table, column, definition string) func(tx *sql.Tx) error {
+	return func(tx *sql.Tx) error {
+		var exists bool
+		err := tx.QueryRow("SELECT EXISTS (SELECT 1 FROM pragma_table_info(?) WHERE name = ?)", table, column).Scan(&exists)
+		if err != nil || exists {
+			return err
+		}
+		_, err = tx.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+		return err
+	}
 }
 
 func migrate(db *sql.DB) error {
@@ -58,7 +85,7 @@ func migrateTx(tx *sql.Tx) error {
 		return fmt.Errorf("the database is at schema version %d, newer than this app knows (%d)", version, len(migrations))
 	}
 	for i := version; i < len(migrations); i++ {
-		if _, err = tx.Exec(migrations[i]); err != nil {
+		if err = migrations[i](tx); err != nil {
 			return fmt.Errorf("schema migration %d: %w", i+1, err)
 		}
 	}

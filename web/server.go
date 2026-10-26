@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/rs/zerolog"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 
 	"github.com/cloud-in-a-bottle/bottled-bridge-core/bridge"
@@ -115,6 +116,7 @@ func New(opts Options) (*Server, error) {
 	mux.HandleFunc("DELETE /api/messages/{id}", s.unsend)
 	mux.HandleFunc("POST /api/messages/{id}/retry", s.retry)
 	mux.HandleFunc("POST /api/messages/{id}/discard", s.discard)
+	mux.HandleFunc("POST /api/messages/{id}/viewed", s.viewed)
 	mux.HandleFunc("GET /api/messages/{id}/location", s.location)
 	mux.HandleFunc("GET /api/attachments/{id}", s.attachment)
 	mux.HandleFunc("GET /api/files/{sha}", s.file)
@@ -129,7 +131,24 @@ func New(opts Options) (*Server, error) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if crossSite(r) {
+		writeError(w, http.StatusForbidden, "cross-site request refused")
+		return
+	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// crossSite reports whether a request that changes something comes from another site's page. OpenHost's login cookie
+// is SameSite=Lax, and every app on an instance is the same site, so a page from another app could otherwise send
+// messages, link devices, ... with the owner's cookie. Browsers say where a request comes from in Sec-Fetch-Site;
+// requests from programs (eg other apps using the messaging service through the router) don't have it.
+func crossSite(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	site := r.Header.Get("Sec-Fetch-Site")
+	return site != "" && site != "same-origin" && site != "none"
 }
 
 // Handle adds an app route, eg for an importer. App routes should live under /api/.
@@ -168,6 +187,7 @@ func writeError(w http.ResponseWriter, status int, detail string) {
 // for BadRequest errors, and 500 (logged) for anything else.
 func (s *Server) Fail(w http.ResponseWriter, r *http.Request, err error) {
 	var respErr bridgev2.RespError
+	var mxErr mautrix.RespError
 	var statusErr bridgev2.MessageStatus
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -176,8 +196,12 @@ func (s *Server) Fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, bridge.ErrNoLogin):
 		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, bridge.ErrNotViewOnce):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.As(err, &respErr):
 		writeError(w, http.StatusBadRequest, respErr.Err)
+	case errors.As(err, &mxErr):
+		writeError(w, http.StatusBadRequest, mxErr.Err)
 	case errors.As(err, &statusErr):
 		writeError(w, http.StatusBadRequest, statusErr.Error())
 	case errors.As(err, new(clientError)):

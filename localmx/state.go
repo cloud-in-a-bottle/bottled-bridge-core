@@ -120,7 +120,7 @@ func (c *Connector) applyState(ctx context.Context, tx *store.Tx, conversationID
 		if parsed.Type == event.DisappearingTypeNone || parsed.Timer.Duration == 0 {
 			return update(sender, "disappearing", "turned off disappearing messages")
 		}
-		return update(sender, "disappearing", fmt.Sprintf("set messages to disappear after %s", parsed.Timer.Duration))
+		return update(sender, "disappearing", "set messages to disappear after "+durationText(parsed.Timer.Duration))
 	case *event.SpaceParentEventContent:
 		parentID, _, err := tx.ConversationByRoom(stateKey)
 		if errors.Is(err, store.ErrNotFound) {
@@ -188,4 +188,20 @@ func (c *Connector) applyMembership(ctx context.Context, tx *store.Tx, conversat
 	default:
 		return update(target, "member", "left the group")
 	}
+}
+
+// durationText says how long a timer is, eg "1 hour" or "90 seconds".
+func durationText(d time.Duration) string {
+	for _, u := range []struct {
+		d    time.Duration
+		name string
+	}{{7 * 24 * time.Hour, "week"}, {24 * time.Hour, "day"}, {time.Hour, "hour"}, {time.Minute, "minute"}, {time.Second, "second"}} {
+		if d >= u.d && d%u.d == 0 {
+			if n := int(d / u.d); n != 1 {
+				return fmt.Sprintf("%d %ss", n, u.name)
+			}
+			return "1 " + u.name
+		}
+	}
+	return d.String()
 }
