@@ -84,7 +84,10 @@ func (c *Connector) applyTimelineEvent(ctx context.Context, tx *store.Tx, te tim
 			if newContent == nil {
 				newContent = msg
 			}
-			err = tx.EditPart(string(target), newContent.Body, newContent.FormattedBody, te.ts)
+			err = tx.EditPart(
+				string(target), plainBody(newContent.Body, newContent.Format, newContent.FormattedBody),
+				newContent.FormattedBody, te.ts,
+			)
 			if errors.Is(err, store.ErrNotFound) {
 				log.Warn().Stringer("target", target).Msg("Edit target not found")
 				return nil
@@ -134,7 +137,7 @@ func (c *Connector) convertMessage(conversationID, authorID int64, te timelineEv
 		SentAt:          te.ts,
 		Kind:            "message",
 		MsgType:         string(msg.MsgType),
-		Body:            msg.Body,
+		Body:            plainBody(msg.Body, msg.Format, msg.FormattedBody),
 		ReplyToEvent:    string(msg.RelatesTo.GetNonFallbackReplyTo()),
 		ThreadRootEvent: string(msg.RelatesTo.GetThreadParent()),
 		Source:          te.source,
@@ -162,8 +165,8 @@ func (c *Connector) convertMessage(conversationID, authorID int64, te timelineEv
 			part.LinkPreviews = string(previews)
 		}
 	}
-	if msg.MsgType == event.MsgLocation && msg.GeoURI != "" && !strings.Contains(msg.Body, msg.GeoURI) {
-		part.Body = strings.TrimSpace(msg.Body + "\n" + msg.GeoURI)
+	if msg.MsgType == event.MsgLocation && msg.GeoURI != "" && !strings.Contains(part.Body, msg.GeoURI) {
+		part.Body = strings.TrimSpace(part.Body + "\n" + msg.GeoURI)
 	}
 	part.ViewOnce = msg.BeeperViewLimited != nil
 	isSticker := te.evtType == event.EventSticker
@@ -187,7 +190,7 @@ func convertAttachment(msg *event.MessageEventContent, isSticker bool) *store.Ne
 	if a.Filename == "" {
 		a.Filename = msg.Body
 	} else if msg.Body != msg.FileName {
-		a.Caption = msg.Body
+		a.Caption = plainBody(msg.Body, msg.Format, msg.FormattedBody)
 	}
 	if info := msg.Info; info != nil {
 		a.ContentType = info.MimeType
