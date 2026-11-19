@@ -239,6 +239,30 @@ func TestImageMessage(t *testing.T) {
 	}
 }
 
+// A formatted message is stored as plain text, not as Matrix's Markdown fallback: here an Instagram share, whose
+// caption labels the full link with a shortened copy of it.
+func TestFormattedCaptionIsPlainText(t *testing.T) {
+	h := bridgetest.New(t)
+	full := "https://www.instagram.com/reel/Dfz18H7IpCQ/?id=1_2"
+	short := "https://www.instagram.com/reel/Dfz18H7IpCQ/"
+	msg := bridgetest.ImageMessage("alice", "img-1", []byte("\x89PNG\r\n\x1a\n"), "["+short+"]("+full+")", time.UnixMilli(1_700_000_000_000))
+	convert := msg.ConvertMessageFunc
+	msg.ConvertMessageFunc = func(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI, data string) (*bridgev2.ConvertedMessage, error) {
+		converted, err := convert(ctx, portal, intent, data)
+		if err != nil {
+			return nil, err
+		}
+		content := converted.Parts[0].Content
+		content.Format, content.FormattedBody = event.FormatHTML, `<a href="`+full+`">`+short+`</a>`
+		return converted, nil
+	}
+	h.Queue(msg)
+	msgs := h.Messages(dmKey())
+	if len(msgs) != 1 || len(msgs[0].Attachments) != 1 || msgs[0].Attachments[0].Caption != full {
+		t.Fatalf("unexpected messages: %+v", msgs)
+	}
+}
+
 func TestAccountReportsInitialSync(t *testing.T) {
 	var syncing atomic.Bool
 	syncing.Store(true)
